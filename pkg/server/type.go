@@ -4,7 +4,8 @@ import "encoding/gob"
 
 // SBucketServer wraps all logic for accepting and handling connections
 type SBucketServer interface {
-	Run()
+	Start()
+	Shutdown()
 }
 
 // SBucketLogger interface an be used for supplying any logger for server

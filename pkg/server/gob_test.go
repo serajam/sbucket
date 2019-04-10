@@ -2,53 +2,63 @@ package server
 
 import (
 	"encoding/gob"
+	"errors"
+	"io/ioutil"
 	"net"
 	"os"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/serajam/sbucket/pkg"
 	"github.com/serajam/sbucket/pkg/storage"
 )
 
+type mockMiddleware struct {
+}
+
+func (mockMiddleware) Run(enc *gob.Encoder, dec *gob.Decoder) error {
+	return errors.New("error")
+}
+
 type ValMock struct{}
 
 func (ValMock) Value() string {
-	panic("implement me")
+	return ""
 }
 
 func (ValMock) Set(string) {
-	panic("implement me")
 }
 
 type StorageMock struct{}
 
 func (StorageMock) NewBucket(name string) error {
-	panic("implement me")
+	return nil
 }
 
 func (StorageMock) DelBucket(name string) error {
-	panic("implement me")
+	return nil
 }
 
 func (StorageMock) Add(bucket, key, val string) error {
-	panic("implement me")
+	return nil
 }
 
 func (StorageMock) Get(bucket, key string) (storage.SBucketValue, error) {
-	panic("implement me")
+	return nil, nil
 }
 
 func (StorageMock) Del(bucket, key string) error {
-	panic("implement me")
+	return nil
 }
 
 func (StorageMock) Update(bucket, key, val string) error {
-	panic("implement me")
+	return nil
 }
 
 func (StorageMock) Stats() string {
-	panic("implement me")
+	return "ok"
 }
 
 func TestWithMiddleware(t *testing.T) {
@@ -306,7 +316,22 @@ func Test_server_writeMessage(t *testing.T) {
 		fields fields
 		args   args
 	}{
-		// TODO: Add test cases.
+		{
+			"should write message",
+			fields{
+				&StorageMock{},
+				nil,
+				"",
+				1,
+				1,
+				1,
+				make(map[string]handler),
+				make(chan struct{}),
+				1,
+				[]Middleware{},
+			},
+			args{e: gob.NewEncoder(ioutil.Discard), msg: &pkg.Message{}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -344,7 +369,21 @@ func Test_server_Run(t *testing.T) {
 		name   string
 		fields fields
 	}{
-		// TODO: Add test cases.
+		{
+			"should run server",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				make(map[string]handler),
+				make(chan struct{}),
+				1,
+				[]Middleware{},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -360,7 +399,22 @@ func Test_server_Run(t *testing.T) {
 				clientsCount:       tt.fields.clientsCount,
 				middleware:         tt.fields.middleware,
 			}
-			s.Run()
+			wg := &sync.WaitGroup{}
+			wg.Add(1)
+			go func(wg *sync.WaitGroup) {
+				s.Start()
+				wg.Done()
+			}(wg)
+			time.Sleep(1 * time.Second)
+			s.Shutdown()
+
+			c, err := net.Dial("tcp", ":54444")
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			c.Close()
+			wg.Wait()
 		})
 	}
 }
@@ -379,17 +433,172 @@ func Test_server_handleConn(t *testing.T) {
 		middleware         []Middleware
 	}
 	type args struct {
-		conn net.Conn
+		callback func(c net.Conn)
 	}
 	tests := []struct {
 		name   string
 		fields fields
 		args   args
 	}{
-		// TODO: Add test cases.
+		{
+			"should handle connection EOF",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				make(map[string]handler),
+				make(chan struct{}, 1),
+				0,
+				[]Middleware{},
+			},
+			args{callback: func(c net.Conn) {
+				time.Sleep(100 * time.Millisecond)
+				c.Close()
+			}},
+		},
+
+		{
+			"should fail on read deadline",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				make(map[string]handler),
+				make(chan struct{}, 1),
+				0,
+				[]Middleware{},
+			},
+			args{callback: func(c net.Conn) {
+
+			}},
+		},
+
+		{
+			"should timeout if no connection slot available",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				make(map[string]handler),
+				make(chan struct{}, 0),
+				0,
+				[]Middleware{},
+			},
+			args{callback: func(c net.Conn) {
+			}},
+		},
+
+		{
+			"should run middleware error",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				make(map[string]handler),
+				make(chan struct{}, 1),
+				0,
+				[]Middleware{mockMiddleware{}},
+			},
+			args{callback: func(c net.Conn) {
+				time.Sleep(100 * time.Millisecond)
+				c.Close()
+			}},
+		},
+
+
+		{
+			"should handle invalid command",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				make(map[string]handler),
+				make(chan struct{}, 1),
+				0,
+				[]Middleware{},
+			},
+			args{callback: func(c net.Conn) {
+				time.Sleep(100 * time.Millisecond)
+				enc := gob.NewEncoder(c)
+				err := enc.Encode(&pkg.Message{Command: "INVALID"})
+				if err != nil {
+					println(err)
+				}
+				time.Sleep(100 * time.Millisecond)
+				c.Close()
+			}},
+		},
+
+		{
+			"should handle command",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				map[string]handler{"TEST": func(enc *gob.Encoder, m pkg.Message) {}},
+				make(chan struct{}, 1),
+				0,
+				[]Middleware{},
+			},
+			args{callback: func(c net.Conn) {
+				time.Sleep(100 * time.Millisecond)
+				enc := gob.NewEncoder(c)
+				err := enc.Encode(&pkg.Message{Command: "TEST"})
+				if err != nil {
+					println(err)
+				}
+				time.Sleep(100 * time.Millisecond)
+				c.Close()
+			}},
+		},
+
+		{
+			"should handle close command",
+			fields{
+				&StorageMock{},
+				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				":54444",
+				1,
+				1,
+				1,
+				map[string]handler{},
+				make(chan struct{}, 1),
+				0,
+				[]Middleware{},
+			},
+			args{callback: func(c net.Conn) {
+				time.Sleep(100 * time.Millisecond)
+				enc := gob.NewEncoder(c)
+				err := enc.Encode(&pkg.Message{Command: pkg.CloseCommand})
+				if err != nil {
+					println(err)
+				}
+				time.Sleep(100 * time.Millisecond)
+				c.Close()
+			}},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+
 			s := &server{
 				storage:            tt.fields.storage,
 				logger:             tt.fields.logger,
@@ -402,7 +611,24 @@ func Test_server_handleConn(t *testing.T) {
 				clientsCount:       tt.fields.clientsCount,
 				middleware:         tt.fields.middleware,
 			}
-			s.handleConn(tt.args.conn)
+
+			wg := &sync.WaitGroup{}
+			wg.Add(1)
+			go func(wg *sync.WaitGroup) {
+				s.Start()
+				wg.Done()
+			}(wg)
+			time.Sleep(2 * time.Second)
+			s.Shutdown()
+
+			c, err := net.Dial("tcp", tt.fields.address)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			go tt.args.callback(c)
+
+			s.handleConn(c)
 		})
 	}
 }

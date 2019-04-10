@@ -24,7 +24,7 @@ func (r AuthMiddleware) authenticate(login, pass string) error {
 	return nil
 }
 
-// Run execute middleware
+// Start execute middleware
 func (r AuthMiddleware) Run(enc *gob.Encoder, dec *gob.Decoder) error {
 	authMsg := pkg.AuthMessage{}
 	err := dec.Decode(&authMsg)

@@ -2,12 +2,12 @@ package server
 
 import (
 	"encoding/gob"
-	"fmt"
 	"github.com/serajam/sbucket/pkg"
 	"github.com/serajam/sbucket/pkg/storage"
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -75,6 +75,13 @@ func MaxConnNum(d int) Option {
 	}
 }
 
+// MaxFailures option defines max failures allowed per connection
+func MaxFailures(d int) Option {
+	return func(s *server) {
+		s.maxFailures = d
+	}
+}
+
 // ConnectTimeout option defines max wait time when trying to aquire slot for new connection
 func ConnectTimeout(d int) Option {
 	return func(s *server) {
@@ -93,6 +100,7 @@ type server struct {
 	connectTimeout     int // seconds
 	connectionDeadline int // seconds
 	maxConnNum         int // seconds
+	maxFailures        int
 
 	handlers map[string]handler
 
@@ -100,6 +108,10 @@ type server struct {
 	clientsCount int32
 
 	middleware []Middleware
+
+	mu sync.RWMutex
+	// contains server state
+	running bool
 }
 
 // New creates new storage
@@ -141,8 +153,26 @@ func (s *server) writeMessage(e *gob.Encoder, msg *pkg.Message) {
 	}
 }
 
-// Run starts storage server
-func (s *server) Run() {
+func (s *server) isRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.running
+}
+
+// Shutdown change flag which is checked to verify if server is running
+func (s *server) Shutdown() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.running = false
+}
+
+// Start starts storage server
+func (s *server) Start() {
+	s.running = true
+
+	// TODO add http server for exposing stats
 	var (
 		err      error
 		listener net.Listener
@@ -161,18 +191,7 @@ func (s *server) Run() {
 
 	s.logger.Infof("Server listening on %s", s.address)
 
-	go func() {
-		t := time.NewTicker(5 * time.Second)
-		for {
-			select {
-			case <-t.C:
-				s.logger.Infof("Max clients: %d", atomic.LoadInt32(&s.clientsCount))
-				s.logger.Info(s.storage.Stats())
-			}
-		}
-	}()
-
-	for {
+	for s.isRunning() {
 		conn, err = listener.Accept()
 		if err != nil {
 			s.logger.Errorf("Failed to accept connection: %s:", err)
@@ -197,8 +216,6 @@ func (s *server) handleConn(conn net.Conn) {
 	atomic.AddInt32(&s.clientsCount, 1)
 	defer func() { atomic.AddInt32(&s.clientsCount, -1) }()
 
-	failures := 0
-
 	for _, m := range s.middleware {
 		err := m.Run(enc, dec)
 		if err != nil {
@@ -209,6 +226,7 @@ func (s *server) handleConn(conn net.Conn) {
 
 	message := pkg.Message{}
 
+	failures := s.maxFailures
 	for {
 		if failures > 10 {
 			return
@@ -221,7 +239,6 @@ func (s *server) handleConn(conn net.Conn) {
 		err := dec.Decode(&message)
 		if err != nil {
 			if err.Error() == "EOF" {
-				fmt.Println("EOF")
 				return
 			}
 			if strings.Contains(err.Error(), "timeout") {
@@ -249,6 +266,7 @@ func (s *server) handleConn(conn net.Conn) {
 }
 
 func (s *server) applyDeadline(c net.Conn, enc *gob.Encoder) bool {
+	// unlimited
 	if s.connectionDeadline == 0 {
 		return true
 	}
@@ -265,6 +283,7 @@ func (s *server) applyDeadline(c net.Conn, enc *gob.Encoder) bool {
 }
 
 func (s *server) acquireConnectionSlot(enc *gob.Encoder) bool {
+	// unlimited
 	if s.maxConnNum == 0 {
 		return true
 	}
