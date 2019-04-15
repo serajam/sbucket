@@ -62,6 +62,7 @@ func Logger(loggerType, info, error string) Option {
 }
 
 // Deadline option defines connection activity deadline
+// 0 - disables deadline
 func Deadline(d int) Option {
 	return func(s *server) {
 		s.connectionDeadline = d
@@ -69,6 +70,7 @@ func Deadline(d int) Option {
 }
 
 // MaxConnNum option defines max conn number allowed
+// 0 - disables connection limit
 func MaxConnNum(d int) Option {
 	return func(s *server) {
 		s.maxConnNum = d
@@ -76,6 +78,7 @@ func MaxConnNum(d int) Option {
 }
 
 // MaxFailures option defines max failures allowed per connection
+// 0 - disables failures limit
 func MaxFailures(d int) Option {
 	return func(s *server) {
 		s.maxFailures = d
@@ -90,7 +93,7 @@ func ConnectTimeout(d int) Option {
 }
 
 // message handler
-type handler func(enc codec.Encoder, m internal.Message)
+type handler func(enc codec.Encoder, m *internal.Message)
 
 type server struct {
 	storage storage.SBucketStorage
@@ -236,7 +239,7 @@ func (s *server) handleConn(conn net.Conn) {
 
 	failures := s.maxFailures
 	for {
-		if failures > 10 {
+		if s.maxFailures > 0 && failures == 0 {
 			return
 		}
 
@@ -258,7 +261,7 @@ func (s *server) handleConn(conn net.Conn) {
 				return
 			}
 
-			failures++
+			failures--
 			s.logger.Errorf("Failed to read command: %s\n", err)
 			continue
 		}
@@ -273,7 +276,7 @@ func (s *server) handleConn(conn net.Conn) {
 			continue
 		}
 
-		h(cod, message)
+		h(cod, &message)
 	}
 }
 
@@ -283,9 +286,8 @@ func (s *server) applyDeadline(c net.Conn, enc codec.Encoder) bool {
 		return true
 	}
 
-	err := c.SetDeadline(time.Now().Add(time.Duration(s.connectTimeout) * time.Second))
+	err := c.SetDeadline(time.Now().Add(time.Duration(s.connectionDeadline) * time.Second))
 	if err != nil {
-		s.logger.Error("Failed to set connection deadline")
 		s.writeMessage(enc, &internal.Message{Result: false, Data: "Internal error"})
 		s.logger.Errorf("Failed to set connection deadline: %s:", err)
 		return false
@@ -311,7 +313,7 @@ func (s *server) acquireConnectionSlot(enc codec.Encoder) bool {
 	return true
 }
 
-func (s *server) handleCreateBucket(enc codec.Encoder, m internal.Message) {
+func (s *server) handleCreateBucket(enc codec.Encoder, m *internal.Message) {
 	err := s.storage.NewBucket(m.Value)
 	if err != nil {
 		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
@@ -320,7 +322,7 @@ func (s *server) handleCreateBucket(enc codec.Encoder, m internal.Message) {
 	s.writeMessage(enc, &internal.Message{Result: true})
 }
 
-func (s *server) handleDeleteBucket(enc codec.Encoder, m internal.Message) {
+func (s *server) handleDeleteBucket(enc codec.Encoder, m *internal.Message) {
 	err := s.storage.DelBucket(m.Value)
 	if err != nil {
 		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
@@ -329,7 +331,7 @@ func (s *server) handleDeleteBucket(enc codec.Encoder, m internal.Message) {
 	s.writeMessage(enc, &internal.Message{Result: true})
 }
 
-func (s *server) handleAdd(enc codec.Encoder, m internal.Message) {
+func (s *server) handleAdd(enc codec.Encoder, m *internal.Message) {
 	err := s.storage.Add(m.Bucket, m.Key, m.Value)
 	if err != nil {
 		go s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
@@ -338,15 +340,15 @@ func (s *server) handleAdd(enc codec.Encoder, m internal.Message) {
 	go s.writeMessage(enc, &internal.Message{Result: true})
 }
 
-func (s *server) handleGet(enc codec.Encoder, m internal.Message) {
+func (s *server) handleGet(enc codec.Encoder, m *internal.Message) {
 	v, err := s.storage.Get(m.Bucket, m.Key)
 	if err != nil {
 		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
 		return
 	}
-	s.writeMessage(enc, &internal.Message{Value: v.Value()})
+	s.writeMessage(enc, &internal.Message{Value: v.Value(), Result: true})
 }
 
-func (s *server) handlePing(enc codec.Encoder, m internal.Message) {
+func (s *server) handlePing(enc codec.Encoder, m *internal.Message) {
 	s.logger.Debug("Received Ping")
 }
