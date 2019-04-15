@@ -16,7 +16,6 @@ func main() {
 		log.Println(http.ListenAndServe("localhost:6060", nil))
 	}()
 
-
 	storageType := flag.String("type", storage.SyncMapType,
 		fmt.Sprintf("Available storage types: %s, %s", storage.MapType, storage.SyncMapType))
 	address := flag.String("address", "localhost:3456", "Listening address for server")
@@ -27,6 +26,7 @@ func main() {
 	password := flag.String("password", "", "Password for authentication. Used in pair with login")
 	maxConnNum := flag.Int("max_conn_num", 0, "Maximum number for allowed simulations connections")
 	connTimeout := flag.Int("connect_timeout", 5, "Maximum number for allowed simulations connections")
+	maxConnFailures := flag.Int("connection_failures", 15, "Maximum number for connection failures")
 
 	flag.Parse()
 
@@ -48,6 +48,7 @@ func main() {
 		server.WithMiddleware(middleware...),
 		server.MaxConnNum(*maxConnNum),
 		server.ConnectTimeout(*connTimeout),
+		server.MaxFailures(*maxConnFailures),
 	)
 	s.Start()
 }
