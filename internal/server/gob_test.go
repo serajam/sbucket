@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"encoding/gob"
 	"errors"
+	"github.com/serajam/sbucket/internal/codec"
+	"io"
 	"io/ioutil"
 	"net"
 	"os"
@@ -11,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/serajam/sbucket/pkg"
-	"github.com/serajam/sbucket/pkg/storage"
+	"github.com/serajam/sbucket/internal"
+	"github.com/serajam/sbucket/internal/storage"
 )
 
 type mockMiddleware struct {
 }
 
-func (mockMiddleware) Run(enc *gob.Encoder, dec *gob.Decoder) error {
+func (mockMiddleware) Run(enc codec.Codec) error {
 	return errors.New("error")
 }
 
@@ -309,7 +312,7 @@ func Test_server_writeMessage(t *testing.T) {
 	}
 	type args struct {
 		e   *gob.Encoder
-		msg *pkg.Message
+		msg *internal.Message
 	}
 	tests := []struct {
 		name   string
@@ -330,7 +333,7 @@ func Test_server_writeMessage(t *testing.T) {
 				1,
 				[]Middleware{},
 			},
-			args{e: gob.NewEncoder(ioutil.Discard), msg: &pkg.Message{}},
+			args{e: gob.NewEncoder(ioutil.Discard), msg: &internal.Message{}},
 		},
 	}
 	for _, tt := range tests {
@@ -422,7 +425,7 @@ func Test_server_Run(t *testing.T) {
 func Test_server_handleConn(t *testing.T) {
 	type fields struct {
 		storage            storage.SBucketStorage
-		logger             SBucketLogger
+		errOutput          io.Writer
 		address            string
 		connectTimeout     int
 		connectionDeadline int
@@ -436,18 +439,19 @@ func Test_server_handleConn(t *testing.T) {
 		callback func(c net.Conn)
 	}
 	tests := []struct {
-		name   string
-		fields fields
-		args   args
+		name            string
+		fields          fields
+		args            args
+		wantLoggerError bool
 	}{
 		{
 			"should handle connection EOF",
 			fields{
 				&StorageMock{},
-				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				os.Stderr,
 				":54444",
-				1,
-				1,
+				10,
+				10,
 				1,
 				make(map[string]handler),
 				make(chan struct{}, 1),
@@ -455,16 +459,17 @@ func Test_server_handleConn(t *testing.T) {
 				[]Middleware{},
 			},
 			args{callback: func(c net.Conn) {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(1000 * time.Millisecond)
 				c.Close()
 			}},
+			false,
 		},
 
 		{
 			"should fail on read deadline",
 			fields{
 				&StorageMock{},
-				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				os.Stderr,
 				":54444",
 				1,
 				1,
@@ -477,13 +482,14 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 
 			}},
+			false,
 		},
 
 		{
 			"should timeout if no connection slot available",
 			fields{
 				&StorageMock{},
-				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				os.Stderr,
 				":54444",
 				1,
 				1,
@@ -495,13 +501,14 @@ func Test_server_handleConn(t *testing.T) {
 			},
 			args{callback: func(c net.Conn) {
 			}},
+			false,
 		},
 
 		{
 			"should run middleware error",
 			fields{
 				&StorageMock{},
-				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				os.Stderr,
 				":54444",
 				1,
 				1,
@@ -515,6 +522,7 @@ func Test_server_handleConn(t *testing.T) {
 				time.Sleep(100 * time.Millisecond)
 				c.Close()
 			}},
+			true,
 		},
 
 
@@ -522,7 +530,7 @@ func Test_server_handleConn(t *testing.T) {
 			"should handle invalid command",
 			fields{
 				&StorageMock{},
-				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				os.Stderr,
 				":54444",
 				1,
 				1,
@@ -535,46 +543,48 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(100 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&pkg.Message{Command: "INVALID"})
+				err := enc.Encode(&internal.Message{Command: "INVALID"})
 				if err != nil {
 					println(err)
 				}
 				time.Sleep(100 * time.Millisecond)
 				c.Close()
 			}},
+			false,
 		},
 
 		{
 			"should handle command",
 			fields{
 				&StorageMock{},
-				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				os.Stderr,
 				":54444",
 				1,
 				1,
 				1,
-				map[string]handler{"TEST": func(enc *gob.Encoder, m pkg.Message) {}},
+				map[string]handler{"TEST": func(c codec.Encoder, m internal.Message) {}},
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{},
 			},
 			args{callback: func(c net.Conn) {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(500 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&pkg.Message{Command: "TEST"})
+				err := enc.Encode(&internal.Message{Command: "TEST"})
 				if err != nil {
 					println(err)
 				}
 				time.Sleep(100 * time.Millisecond)
 				c.Close()
 			}},
+			false,
 		},
 
 		{
 			"should handle close command",
 			fields{
 				&StorageMock{},
-				newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				os.Stderr,
 				":54444",
 				1,
 				1,
@@ -585,24 +595,27 @@ func Test_server_handleConn(t *testing.T) {
 				[]Middleware{},
 			},
 			args{callback: func(c net.Conn) {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(500 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&pkg.Message{Command: pkg.CloseCommand})
+				err := enc.Encode(&internal.Message{Command: internal.CloseCommand})
 				if err != nil {
 					println(err)
 				}
 				time.Sleep(100 * time.Millisecond)
 				c.Close()
 			}},
+			false,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			buffer := &bytes.Buffer{}
 
 			s := &server{
 				storage:            tt.fields.storage,
-				logger:             tt.fields.logger,
+				logger:             newDefaultLogger(ioutil.Discard, buffer),
 				address:            tt.fields.address,
+				codecType:          codec.Gob,
 				connectTimeout:     tt.fields.connectTimeout,
 				connectionDeadline: tt.fields.connectionDeadline,
 				maxConnNum:         tt.fields.maxConnNum,
@@ -612,23 +625,16 @@ func Test_server_handleConn(t *testing.T) {
 				middleware:         tt.fields.middleware,
 			}
 
-			wg := &sync.WaitGroup{}
-			wg.Add(1)
-			go func(wg *sync.WaitGroup) {
-				s.Start()
-				wg.Done()
-			}(wg)
-			time.Sleep(2 * time.Second)
-			s.Shutdown()
+			c, _ := net.Pipe()
+			go tt.args.callback(c)
+			go s.handleConn(c)
+			time.Sleep(500 * time.Millisecond)
 
-			c, err := net.Dial("tcp", tt.fields.address)
-			if err != nil {
-				t.Error(err)
+			logs, _ := ioutil.ReadAll(buffer)
+			if !tt.wantLoggerError && len(logs) > 0 {
+				t.Errorf("Was not expecting errors in log: %s", logs)
 				return
 			}
-			go tt.args.callback(c)
-
-			s.handleConn(c)
 		})
 	}
 }
@@ -739,7 +745,7 @@ func Test_server_handleCreateBucket(t *testing.T) {
 	}
 	type args struct {
 		enc *gob.Encoder
-		m   pkg.Message
+		m   internal.Message
 	}
 	tests := []struct {
 		name   string
@@ -782,7 +788,7 @@ func Test_server_handleDeleteBucket(t *testing.T) {
 	}
 	type args struct {
 		enc *gob.Encoder
-		m   pkg.Message
+		m   internal.Message
 	}
 	tests := []struct {
 		name   string
@@ -825,7 +831,7 @@ func Test_server_handleAdd(t *testing.T) {
 	}
 	type args struct {
 		enc *gob.Encoder
-		m   pkg.Message
+		m   internal.Message
 	}
 	tests := []struct {
 		name   string
@@ -868,7 +874,7 @@ func Test_server_handleGet(t *testing.T) {
 	}
 	type args struct {
 		enc *gob.Encoder
-		m   pkg.Message
+		m   internal.Message
 	}
 	tests := []struct {
 		name   string
@@ -911,7 +917,7 @@ func Test_server_handlePing(t *testing.T) {
 	}
 	type args struct {
 		enc *gob.Encoder
-		m   pkg.Message
+		m   internal.Message
 	}
 	tests := []struct {
 		name   string

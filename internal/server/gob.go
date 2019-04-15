@@ -1,9 +1,9 @@
 package server
 
 import (
-	"encoding/gob"
-	"github.com/serajam/sbucket/pkg"
-	"github.com/serajam/sbucket/pkg/storage"
+	"github.com/serajam/sbucket/internal"
+	"github.com/serajam/sbucket/internal/codec"
+	"github.com/serajam/sbucket/internal/storage"
 	"net"
 	"os"
 	"strings"
@@ -90,13 +90,14 @@ func ConnectTimeout(d int) Option {
 }
 
 // message handler
-type handler func(enc *gob.Encoder, m pkg.Message)
+type handler func(enc codec.Encoder, m internal.Message)
 
 type server struct {
 	storage storage.SBucketStorage
 	logger  SBucketLogger
 
 	address            string
+	codecType          int
 	connectTimeout     int // seconds
 	connectionDeadline int // seconds
 	maxConnNum         int // seconds
@@ -134,21 +135,25 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 		s.clientSem = make(chan struct{}, s.maxConnNum)
 	}
 
+	if s.codecType == 0 {
+		s.codecType = 1
+	}
+
 	s.handlers = map[string]handler{
-		pkg.CreateBucketCommand: s.handleCreateBucket,
-		pkg.DeleteBucketCommand: s.handleDeleteBucket,
-		pkg.AddCommand:          s.handleAdd,
-		pkg.GetCommand:          s.handleGet,
-		pkg.PingCommand:         s.handlePing,
+		internal.CreateBucketCommand: s.handleCreateBucket,
+		internal.DeleteBucketCommand: s.handleDeleteBucket,
+		internal.AddCommand:          s.handleAdd,
+		internal.GetCommand:          s.handleGet,
+		internal.PingCommand:         s.handlePing,
 	}
 
 	return &s
 }
 
-func (s *server) writeMessage(e *gob.Encoder, msg *pkg.Message) {
+func (s *server) writeMessage(e codec.Encoder, msg *internal.Message) {
 	err := e.Encode(msg)
 	if err != nil {
-		s.logger.Errorf("Failed to write request: %s:\n", err)
+		s.logger.Errorf("Failed to write response: %s:\n", err)
 		return
 	}
 }
@@ -205,10 +210,13 @@ func (s *server) Start() {
 func (s *server) handleConn(conn net.Conn) {
 	defer conn.Close()
 
-	dec := gob.NewDecoder(conn)
-	enc := gob.NewEncoder(conn)
+	cod, err := codec.New(s.codecType, conn)
+	if err != nil {
+		s.logger.Error(err)
+		return
+	}
 
-	if !s.acquireConnectionSlot(enc) {
+	if !s.acquireConnectionSlot(cod) {
 		return
 	}
 	defer func() { <-s.clientSem }()
@@ -217,14 +225,14 @@ func (s *server) handleConn(conn net.Conn) {
 	defer func() { atomic.AddInt32(&s.clientsCount, -1) }()
 
 	for _, m := range s.middleware {
-		err := m.Run(enc, dec)
+		err = m.Run(cod)
 		if err != nil {
 			s.logger.Error(err)
 			return
 		}
 	}
 
-	message := pkg.Message{}
+	message := internal.Message{}
 
 	failures := s.maxFailures
 	for {
@@ -232,17 +240,21 @@ func (s *server) handleConn(conn net.Conn) {
 			return
 		}
 
-		if !s.applyDeadline(conn, enc) {
+		if !s.applyDeadline(conn, cod) {
 			return
 		}
 
-		err := dec.Decode(&message)
+		err = cod.Decode(&message)
 		if err != nil {
 			if err.Error() == "EOF" {
 				return
 			}
 			if strings.Contains(err.Error(), "timeout") {
-				s.writeMessage(enc, &pkg.Message{Result: false, Data: "Timeout"})
+				s.writeMessage(cod, &internal.Message{Result: false, Data: "Timeout"})
+				return
+			}
+
+			if strings.Contains(err.Error(), "closed pipe") {
 				return
 			}
 
@@ -251,21 +263,21 @@ func (s *server) handleConn(conn net.Conn) {
 			continue
 		}
 
-		if message.Command == pkg.CloseCommand {
+		if message.Command == internal.CloseCommand {
 			return
 		}
 
 		h, ok := s.handlers[message.Command]
 		if !ok {
-			s.writeMessage(enc, &pkg.Message{Result: false, Data: "Unknown command"})
+			s.writeMessage(cod, &internal.Message{Result: false, Data: "Unknown command"})
 			continue
 		}
 
-		h(enc, message)
+		h(cod, message)
 	}
 }
 
-func (s *server) applyDeadline(c net.Conn, enc *gob.Encoder) bool {
+func (s *server) applyDeadline(c net.Conn, enc codec.Encoder) bool {
 	// unlimited
 	if s.connectionDeadline == 0 {
 		return true
@@ -274,7 +286,7 @@ func (s *server) applyDeadline(c net.Conn, enc *gob.Encoder) bool {
 	err := c.SetDeadline(time.Now().Add(time.Duration(s.connectTimeout) * time.Second))
 	if err != nil {
 		s.logger.Error("Failed to set connection deadline")
-		s.writeMessage(enc, &pkg.Message{Result: false, Data: "Internal error"})
+		s.writeMessage(enc, &internal.Message{Result: false, Data: "Internal error"})
 		s.logger.Errorf("Failed to set connection deadline: %s:", err)
 		return false
 	}
@@ -282,7 +294,7 @@ func (s *server) applyDeadline(c net.Conn, enc *gob.Encoder) bool {
 	return true
 }
 
-func (s *server) acquireConnectionSlot(enc *gob.Encoder) bool {
+func (s *server) acquireConnectionSlot(enc codec.Encoder) bool {
 	// unlimited
 	if s.maxConnNum == 0 {
 		return true
@@ -291,7 +303,7 @@ func (s *server) acquireConnectionSlot(enc *gob.Encoder) bool {
 	timeout := time.NewTimer(time.Duration(s.connectTimeout) * time.Second)
 	select {
 	case <-timeout.C:
-		s.writeMessage(enc, &pkg.Message{Result: false, Data: "Connections limit reached"})
+		s.writeMessage(enc, &internal.Message{Result: false, Data: "Connections limit reached"})
 		return false
 	case s.clientSem <- struct{}{}:
 	}
@@ -299,42 +311,42 @@ func (s *server) acquireConnectionSlot(enc *gob.Encoder) bool {
 	return true
 }
 
-func (s *server) handleCreateBucket(enc *gob.Encoder, m pkg.Message) {
+func (s *server) handleCreateBucket(enc codec.Encoder, m internal.Message) {
 	err := s.storage.NewBucket(m.Value)
 	if err != nil {
-		s.writeMessage(enc, &pkg.Message{Result: false, Data: err.Error()})
+		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
 		return
 	}
-	s.writeMessage(enc, &pkg.Message{Result: true})
+	s.writeMessage(enc, &internal.Message{Result: true})
 }
 
-func (s *server) handleDeleteBucket(enc *gob.Encoder, m pkg.Message) {
+func (s *server) handleDeleteBucket(enc codec.Encoder, m internal.Message) {
 	err := s.storage.DelBucket(m.Value)
 	if err != nil {
-		s.writeMessage(enc, &pkg.Message{Result: false, Data: err.Error()})
+		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
 		return
 	}
-	s.writeMessage(enc, &pkg.Message{Result: true})
+	s.writeMessage(enc, &internal.Message{Result: true})
 }
 
-func (s *server) handleAdd(enc *gob.Encoder, m pkg.Message) {
+func (s *server) handleAdd(enc codec.Encoder, m internal.Message) {
 	err := s.storage.Add(m.Bucket, m.Key, m.Value)
 	if err != nil {
-		go s.writeMessage(enc, &pkg.Message{Result: false, Data: err.Error()})
+		go s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
 		return
 	}
-	go s.writeMessage(enc, &pkg.Message{Result: true})
+	go s.writeMessage(enc, &internal.Message{Result: true})
 }
 
-func (s *server) handleGet(enc *gob.Encoder, m pkg.Message) {
+func (s *server) handleGet(enc codec.Encoder, m internal.Message) {
 	v, err := s.storage.Get(m.Bucket, m.Key)
 	if err != nil {
-		s.writeMessage(enc, &pkg.Message{Result: false, Data: err.Error()})
+		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
 		return
 	}
-	s.writeMessage(enc, &pkg.Message{Value: v.Value()})
+	s.writeMessage(enc, &internal.Message{Value: v.Value()})
 }
 
-func (s *server) handlePing(enc *gob.Encoder, m pkg.Message) {
+func (s *server) handlePing(enc codec.Encoder, m internal.Message) {
 	s.logger.Debug("Received Ping")
 }

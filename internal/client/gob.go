@@ -5,7 +5,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"github.com/serajam/sbucket/pkg"
+	"github.com/serajam/sbucket/internal"
 	"net"
 	"strings"
 	"sync"
@@ -90,7 +90,7 @@ func (d *db) ping() {
 			}
 
 			for i, conn := range d.conn {
-				err := conn.enc.Encode(&pkg.Message{Command: pkg.PingCommand})
+				err := conn.enc.Encode(&internal.Message{Command: internal.PingCommand})
 				if err != nil {
 					fmt.Println("ERR", err)
 					conn.conn.Close()
@@ -152,12 +152,12 @@ func (d *db) releaseConn(conn *gobClient) {
 
 // Authenticate authenticates for using storage
 func (c *gobClient) authenticate(login, pass string) error {
-	err := c.enc.Encode(&pkg.AuthMessage{Login: login, Password: pass})
+	err := c.enc.Encode(&internal.AuthMessage{Login: login, Password: pass})
 	if err != nil {
 		return fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := pkg.Message{}
+	resp := internal.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("error while reading response: %s", err)
@@ -178,14 +178,14 @@ func (d *db) CreateBucket(name string) error {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := pkg.Message{Command: pkg.CreateBucketCommand, Value: name}
+	request := internal.Message{Command: internal.CreateBucketCommand, Value: name}
 
 	err := c.enc.Encode(request)
 	if err != nil {
 		return fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := pkg.Message{}
+	resp := internal.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("error while reading response: %s", err)
@@ -202,14 +202,14 @@ func (d *db) DeleteBucket(name string) error {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := pkg.Message{Command: pkg.DeleteBucketCommand, Value: name}
+	request := internal.Message{Command: internal.DeleteBucketCommand, Value: name}
 
 	err := c.enc.Encode(request)
 	if err != nil {
 		return fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := pkg.Message{}
+	resp := internal.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("error while reading response: %s", err)
@@ -229,7 +229,7 @@ func (d *db) Add(bucket, key, val string) error {
 	}
 	defer d.releaseConn(c)
 
-	msg := pkg.Message{Command: pkg.AddCommand, Bucket: bucket, Key: key, Value: val}
+	msg := internal.Message{Command: internal.AddCommand, Bucket: bucket, Key: key, Value: val}
 
 	err := c.enc.Encode(msg)
 	if err != nil {
@@ -260,14 +260,14 @@ func (d *db) Get(bucket, key string) (string, error) {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := pkg.Message{Command: pkg.GetCommand, Bucket: bucket, Key: key}
+	request := internal.Message{Command: internal.GetCommand, Bucket: bucket, Key: key}
 
 	err := c.enc.Encode(request)
 	if err != nil {
 		return "", fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := pkg.Message{}
+	resp := internal.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return "", fmt.Errorf("error while reading response: %s", err)
@@ -304,7 +304,7 @@ func (d *db) Close() error {
 	for d.active > 0 {
 	}
 
-	request := pkg.Message{Command: pkg.CloseCommand}
+	request := internal.Message{Command: internal.CloseCommand}
 
 	for _, c := range d.conn {
 		err := c.enc.Encode(request)

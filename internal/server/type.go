@@ -1,6 +1,8 @@
 package server
 
-import "encoding/gob"
+import (
+	"github.com/serajam/sbucket/internal/codec"
+)
 
 // SBucketServer wraps all logic for accepting and handling connections
 type SBucketServer interface {
@@ -21,5 +23,5 @@ type SBucketLogger interface {
 
 // Middleware interface provides posibility to execure any kind of work before starting handling connection packets
 type Middleware interface {
-	Run(enc *gob.Encoder, dec *gob.Decoder) error
+	Run(codec codec.Codec) error
 }

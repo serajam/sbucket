@@ -1,4 +1,4 @@
-package pkg
+package internal
 
 // Message used for processing all messages
 type Message struct {

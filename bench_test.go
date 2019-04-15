@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/serajam/sbucket/pkg/client"
+	"github.com/serajam/sbucket/internal/client"
 	"log"
 	"math/rand"
 	"os"

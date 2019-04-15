@@ -1,4 +1,4 @@
-package pkg
+package internal
 
 const (
 	AddCommand          = "ADD"

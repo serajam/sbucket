@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/serajam/sbucket/pkg/server"
-	"github.com/serajam/sbucket/pkg/storage"
+	"github.com/serajam/sbucket/internal/server"
+	"github.com/serajam/sbucket/internal/storage"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -49,5 +49,5 @@ func main() {
 		server.MaxConnNum(*maxConnNum),
 		server.ConnectTimeout(*connTimeout),
 	)
-	s.Run()
+	s.Start()
 }
