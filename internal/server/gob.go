@@ -1,14 +1,19 @@
 package server
 
 import (
+	"fmt"
 	"github.com/serajam/sbucket/internal"
 	"github.com/serajam/sbucket/internal/codec"
 	"github.com/serajam/sbucket/internal/storage"
+	"math/rand"
 	"net"
 	"os"
+	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -69,11 +74,11 @@ func Deadline(d int) Option {
 	}
 }
 
-// MaxConnNum option defines max conn number allowed
+// MaxConnNum option defines max clients number allowed
 // 0 - disables connection limit
 func MaxConnNum(d int) Option {
 	return func(s *server) {
-		s.maxConnNum = d
+		s.maxClientsNum = d
 	}
 }
 
@@ -103,7 +108,7 @@ type server struct {
 	codecType          int
 	connectTimeout     int // seconds
 	connectionDeadline int // seconds
-	maxConnNum         int // seconds
+	maxClientsNum      int // seconds
 	maxFailures        int
 
 	handlers map[string]handler
@@ -116,11 +121,12 @@ type server struct {
 	mu sync.RWMutex
 	// contains server state
 	running bool
+	clients map[string]net.Conn
 }
 
 // New creates new storage
 func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
-	s := server{storage: storage}
+	s := server{storage: storage, clients: map[string]net.Conn{}}
 
 	for _, o := range options {
 		o(&s)
@@ -134,12 +140,12 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 		s.logger = newDefaultLogger(os.Stdout, os.Stderr)
 	}
 
-	if s.clientSem == nil {
-		s.clientSem = make(chan struct{}, s.maxConnNum)
+	if s.maxClientsNum > 0 {
+		s.clientSem = make(chan struct{}, s.maxClientsNum)
 	}
 
 	if s.codecType == 0 {
-		s.codecType = 1
+		s.codecType = codec.Gob
 	}
 
 	s.handlers = map[string]handler{
@@ -161,6 +167,20 @@ func (s *server) writeMessage(e codec.Encoder, msg *internal.Message) {
 	}
 }
 
+func (s *server) addClientConn(c net.Conn) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strconv.Itoa(rand.Int())
+	s.clients[key] = c
+	return key
+}
+
+func (s *server) removeClientConn(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, key)
+}
+
 func (s *server) isRunning() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,9 +191,12 @@ func (s *server) isRunning() bool {
 // Shutdown change flag which is checked to verify if server is running
 func (s *server) Shutdown() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	s.running = false
+	s.mu.Unlock()
+
+	for _, c := range s.clients {
+		c.Close()
+	}
 }
 
 // Start starts storage server
@@ -197,6 +220,16 @@ func (s *server) Start() {
 		listener.Close()
 	}()
 
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
+	go func() {
+		defer signal.Stop(sigs)
+		si := <-sigs
+		fmt.Println("Received:", si)
+		s.Shutdown()
+		os.Exit(0)
+	}()
+
 	s.logger.Infof("Server listening on %s", s.address)
 
 	for s.isRunning() {
@@ -211,15 +244,19 @@ func (s *server) Start() {
 }
 
 func (s *server) handleConn(conn net.Conn) {
-	defer conn.Close()
+	key := s.addClientConn(conn)
+	go func(key string, conn net.Conn) {
+		conn.Close()
+		s.removeClientConn(key)
+	}(key, conn)
 
-	cod, err := codec.New(s.codecType, conn)
+	connCodec, err := codec.New(s.codecType, conn)
 	if err != nil {
 		s.logger.Error(err)
 		return
 	}
 
-	if !s.acquireConnectionSlot(cod) {
+	if !s.acquireConnectionSlot(connCodec) {
 		return
 	}
 	defer func() { <-s.clientSem }()
@@ -228,7 +265,7 @@ func (s *server) handleConn(conn net.Conn) {
 	defer func() { atomic.AddInt32(&s.clientsCount, -1) }()
 
 	for _, m := range s.middleware {
-		err = m.Run(cod)
+		err = m.Run(connCodec)
 		if err != nil {
 			s.logger.Error(err)
 			return
@@ -236,28 +273,30 @@ func (s *server) handleConn(conn net.Conn) {
 	}
 
 	message := internal.Message{}
-
 	failures := s.maxFailures
 	for {
 		if s.maxFailures > 0 && failures == 0 {
 			return
 		}
 
-		if !s.applyDeadline(conn, cod) {
+		if !s.applyDeadline(conn, connCodec) {
 			return
 		}
 
-		err = cod.Decode(&message)
+		err = connCodec.Decode(&message)
 		if err != nil {
-			if err.Error() == "EOF" {
+			if strings.Contains(err.Error(), "EOF") {
 				return
 			}
 			if strings.Contains(err.Error(), "timeout") {
-				s.writeMessage(cod, &internal.Message{Result: false, Data: "Timeout"})
 				return
 			}
 
 			if strings.Contains(err.Error(), "closed pipe") {
+				return
+			}
+
+			if strings.Contains(err.Error(), "use of closed network connection") {
 				return
 			}
 
@@ -272,11 +311,11 @@ func (s *server) handleConn(conn net.Conn) {
 
 		h, ok := s.handlers[message.Command]
 		if !ok {
-			s.writeMessage(cod, &internal.Message{Result: false, Data: "Unknown command"})
+			s.writeMessage(connCodec, &internal.Message{Result: false, Data: "Unknown command"})
 			continue
 		}
 
-		h(cod, &message)
+		h(connCodec, &message)
 	}
 }
 
@@ -298,7 +337,7 @@ func (s *server) applyDeadline(c net.Conn, enc codec.Encoder) bool {
 
 func (s *server) acquireConnectionSlot(enc codec.Encoder) bool {
 	// unlimited
-	if s.maxConnNum == 0 {
+	if s.maxClientsNum == 0 {
 		return true
 	}
 

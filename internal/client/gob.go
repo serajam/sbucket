@@ -238,7 +238,7 @@ func (d *db) Add(bucket, key, val string) error {
 
 	err = c.dec.Decode(&msg)
 
-	if d.isCOnnectionBroken(err) {
+	if d.isConnectionBroken(err) {
 		c.conn.Close()
 	}
 
@@ -316,7 +316,7 @@ func (d *db) Close() error {
 	return nil
 }
 
-func (d *db) isCOnnectionBroken(e error) bool {
+func (d *db) isConnectionBroken(e error) bool {
 	if e == nil {
 		return false
 	}

@@ -49,6 +49,7 @@ func main() {
 		server.MaxConnNum(*maxConnNum),
 		server.ConnectTimeout(*connTimeout),
 		server.MaxFailures(*maxConnFailures),
+		server.Deadline(1),
 	)
 	s.Start()
 }

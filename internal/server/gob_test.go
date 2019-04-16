@@ -246,8 +246,8 @@ func TestMaxConnNum(t *testing.T) {
 		args args
 		want Option
 	}{
-		{"should set max conn num to 1", args{d: 1}, func(s *server) {}},
-		{"should not set max conn num", args{d: 0}, func(s *server) {}},
+		{"should set max clients num to 1", args{d: 1}, func(s *server) {}},
+		{"should not set max clients num", args{d: 0}, func(s *server) {}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -260,7 +260,7 @@ func TestMaxConnNum(t *testing.T) {
 			got(s)
 
 			if s.connectionDeadline != tt.args.d {
-				t.Errorf("MaxConnNum() = %v, want %v", s.maxConnNum, tt.args.d)
+				t.Errorf("MaxConnNum() = %v, want %v", s.maxClientsNum, tt.args.d)
 			}
 		})
 	}
@@ -289,7 +289,7 @@ func TestMaxFailures(t *testing.T) {
 			got(s)
 
 			if s.maxFailures != tt.args.d {
-				t.Errorf("MaxFailures() = %v, want %v", s.maxConnNum, tt.args.d)
+				t.Errorf("MaxFailures() = %v, want %v", s.maxClientsNum, tt.args.d)
 			}
 		})
 	}
@@ -318,7 +318,7 @@ func TestConnectTimeout(t *testing.T) {
 			got(s)
 
 			if s.connectionDeadline != tt.args.d {
-				t.Errorf("ConnectTimeout() = %v, want %v", s.maxConnNum, tt.args.d)
+				t.Errorf("ConnectTimeout() = %v, want %v", s.maxClientsNum, tt.args.d)
 			}
 		})
 	}
@@ -343,7 +343,7 @@ func TestNew(t *testing.T) {
 		{
 			"should create new server with options",
 			args{storage: s, options: []Option{Deadline(1), ConnectTimeout(1), MaxConnNum(0)}},
-			&server{storage: s, connectionDeadline: 1, connectTimeout: 1, maxConnNum: 1},
+			&server{storage: s, connectionDeadline: 1, connectTimeout: 1, maxClientsNum: 1},
 		},
 	}
 	for _, tt := range tests {
@@ -626,7 +626,7 @@ func Test_server_handleConn(t *testing.T) {
 				codecType:          codec.Gob,
 				connectTimeout:     tt.fields.connectTimeout,
 				connectionDeadline: tt.fields.connectionDeadline,
-				maxConnNum:         tt.fields.maxConnNum,
+				maxClientsNum:      tt.fields.maxConnNum,
 				handlers:           tt.fields.handlers,
 				clientSem:          tt.fields.clientSem,
 				clientsCount:       tt.fields.clientsCount,
@@ -661,7 +661,7 @@ func Test_server_applyDeadline(t *testing.T) {
 		want   bool
 	}{
 		{
-			"should apply conn deadline",
+			"should apply clients deadline",
 			args{callback: func(c net.Conn) {
 				time.Sleep(500 * time.Millisecond)
 				c.Close()
@@ -670,7 +670,7 @@ func Test_server_applyDeadline(t *testing.T) {
 			true,
 		},
 		{
-			"should not apply conn deadline",
+			"should not apply clients deadline",
 			args{callback: func(c net.Conn) {
 				c.Close()
 			}},
@@ -732,7 +732,7 @@ func Test_server_acquireConnectionSlot(t *testing.T) {
 			s := &server{
 				logger:         newDefaultLogger(ioutil.Discard, ioutil.Discard),
 				connectTimeout: tt.fields.connectTimeout,
-				maxConnNum:     tt.fields.maxConnNum,
+				maxClientsNum:  tt.fields.maxConnNum,
 				clientSem:      tt.fields.clientSem,
 			}
 
