@@ -21,7 +21,7 @@ type SBucketLogger interface {
 	Debugf(string, ...interface{})
 }
 
-// Middleware interface provides posibility to execure any kind of work before starting handling connection packets
+// Middleware interface provides possibility to execute any kind of work before starting handling connection packets
 type Middleware interface {
 	Run(codec codec.Codec) error
 }

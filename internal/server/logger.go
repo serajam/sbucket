@@ -32,27 +32,27 @@ func newDefaultLogger(infoWriter, errWriter io.Writer) SBucketLogger {
 }
 
 func (l defaultLogger) Error(v interface{}) {
-	l.errLogger.Println(v)
+	l.errLogger.Println("Error:", v)
 }
 
 func (l defaultLogger) Info(v interface{}) {
-	l.infoLogger.Println(v)
+	l.infoLogger.Println("Info:", v)
 }
 
 func (l defaultLogger) Debug(v interface{}) {
-	l.infoLogger.Println(v)
+	l.infoLogger.Println("Debug:", v)
 }
 
 func (l defaultLogger) Errorf(m string, params ...interface{}) {
-	l.errLogger.Printf(m, params...)
+	l.errLogger.Printf("Error: "+m, params...)
 }
 
 func (l defaultLogger) Infof(m string, params ...interface{}) {
-	l.infoLogger.Printf(m, params...)
+	l.infoLogger.Printf("Info: "+m, params...)
 }
 
 func (l defaultLogger) Debugf(m string, params ...interface{}) {
-	l.infoLogger.Printf(m, params...)
+	l.infoLogger.Printf("Debug: "+m, params...)
 }
 
 type logrusLogger struct {

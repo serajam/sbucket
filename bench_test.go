@@ -32,8 +32,9 @@ func init() {
 func TestMain(m *testing.M) {
 	fmt.Println("main")
 	uuid := make([]byte, 16)
-	rand.Seed(345)
+
 	for n := 0; n < 1000000; n++ {
+		rand.Seed(time.Now().Unix() + int64(n))
 		randUUID(uuid)
 		data[n] = fmt.Sprintf("%x-%d", uuid, n)
 	}
@@ -75,6 +76,7 @@ func BenchmarkClient_Add(b *testing.B) {
 		}
 		fmt.Println(fails)
 	})
+	fmt.Println(err)
 
 	clnt.Wait()
 }

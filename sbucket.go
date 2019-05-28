@@ -25,7 +25,7 @@ func main() {
 	login := flag.String("login", "", "Login for authentication. Used in pair with password")
 	password := flag.String("password", "", "Password for authentication. Used in pair with login")
 	maxConnNum := flag.Int("max_conn_num", 0, "Maximum number for allowed simulations connections")
-	connTimeout := flag.Int("connect_timeout", 5, "Maximum number for allowed simulations connections")
+	connTimeout := flag.Int("connect_timeout", 5, "Timeout in seconds if inactive")
 	maxConnFailures := flag.Int("connection_failures", 15, "Maximum number for connection failures")
 
 	flag.Parse()

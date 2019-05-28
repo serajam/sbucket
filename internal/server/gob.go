@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"github.com/serajam/sbucket/internal"
 	"github.com/serajam/sbucket/internal/codec"
@@ -101,11 +102,12 @@ func ConnectTimeout(d int) Option {
 type handler func(enc codec.Encoder, m *internal.Message)
 
 type server struct {
-	storage storage.SBucketStorage
-	logger  SBucketLogger
+	storage      storage.SBucketStorage
+	logger       SBucketLogger
+	connListener net.Listener
 
 	address            string
-	codecType          int
+	codecType          int // codec which will be used to encode and decode messages
 	connectTimeout     int // seconds
 	connectionDeadline int // seconds
 	maxClientsNum      int // seconds
@@ -121,12 +123,12 @@ type server struct {
 	mu sync.RWMutex
 	// contains server state
 	running bool
-	clients map[string]net.Conn
+	clients map[string]wrappedConn
 }
 
 // New creates new storage
 func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
-	s := server{storage: storage, clients: map[string]net.Conn{}}
+	s := server{storage: storage, clients: map[string]wrappedConn{}}
 
 	for _, o := range options {
 		o(&s)
@@ -159,65 +161,24 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 	return &s
 }
 
-func (s *server) writeMessage(e codec.Encoder, msg *internal.Message) {
-	err := e.Encode(msg)
-	if err != nil {
-		s.logger.Errorf("Failed to write response: %s:\n", err)
-		return
-	}
-}
-
-func (s *server) addClientConn(c net.Conn) string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	key := strconv.Itoa(rand.Int())
-	s.clients[key] = c
-	return key
-}
-
-func (s *server) removeClientConn(key string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.clients, key)
-}
-
-func (s *server) isRunning() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.running
-}
-
-// Shutdown change flag which is checked to verify if server is running
-func (s *server) Shutdown() {
-	s.mu.Lock()
-	s.running = false
-	s.mu.Unlock()
-
-	for _, c := range s.clients {
-		c.Close()
-	}
-}
-
 // Start starts storage server
 func (s *server) Start() {
 	s.running = true
 
 	// TODO add http server for exposing stats
 	var (
-		err      error
-		listener net.Listener
-		conn     net.Conn
+		err error
+		c   net.Conn
 	)
 
-	listener, err = net.Listen("tcp", s.address)
+	s.connListener, err = net.Listen("tcp", s.address)
 	if err != nil {
 		s.logger.Errorf("Failed to start storage server: %s:", err)
 		os.Exit(1)
 	}
 
 	defer func() {
-		listener.Close()
+		s.Shutdown()
 	}()
 
 	sigs := make(chan os.Signal, 1)
@@ -227,25 +188,36 @@ func (s *server) Start() {
 		si := <-sigs
 		fmt.Println("Received:", si)
 		s.Shutdown()
-		os.Exit(0)
 	}()
 
 	s.logger.Infof("Server listening on %s", s.address)
 
 	for s.isRunning() {
-		conn, err = listener.Accept()
+		c, err = s.connListener.Accept()
+
+		if !s.isRunning() {
+			break
+		}
+
 		if err != nil {
 			s.logger.Errorf("Failed to accept connection: %s:", err)
 			continue
 		}
 
+		conn := wrappedConn{Conn: c, active: false}
+		s.logger.Debugf("Accepted new connection: %s", conn.LocalAddr())
 		go s.handleConn(conn)
 	}
 }
 
-func (s *server) handleConn(conn net.Conn) {
-	key := s.addClientConn(conn)
-	go func(key string, conn net.Conn) {
+func (s *server) handleConn(conn wrappedConn) {
+	key, err := s.addClientConn(conn)
+	if err != nil {
+		s.logger.Info(err)
+		return
+	}
+
+	defer func(key string, conn net.Conn) {
 		conn.Close()
 		s.removeClientConn(key)
 	}(key, conn)
@@ -274,7 +246,7 @@ func (s *server) handleConn(conn net.Conn) {
 
 	message := internal.Message{}
 	failures := s.maxFailures
-	for {
+	for s.isRunning() && !conn.isPendingClosure() {
 		if s.maxFailures > 0 && failures == 0 {
 			return
 		}
@@ -285,18 +257,23 @@ func (s *server) handleConn(conn net.Conn) {
 
 		err = connCodec.Decode(&message)
 		if err != nil {
+
 			if strings.Contains(err.Error(), "EOF") {
+				s.logger.Debug(err)
 				return
 			}
 			if strings.Contains(err.Error(), "timeout") {
+				s.logger.Debug(err)
 				return
 			}
 
 			if strings.Contains(err.Error(), "closed pipe") {
+				s.logger.Debug(err)
 				return
 			}
 
 			if strings.Contains(err.Error(), "use of closed network connection") {
+				s.logger.Debug(err)
 				return
 			}
 
@@ -304,6 +281,8 @@ func (s *server) handleConn(conn net.Conn) {
 			s.logger.Errorf("Failed to read command: %s\n", err)
 			continue
 		}
+
+		conn.setActive(true)
 
 		if message.Command == internal.CloseCommand {
 			return
@@ -316,7 +295,89 @@ func (s *server) handleConn(conn net.Conn) {
 		}
 
 		h(connCodec, &message)
+
+		conn.setActive(false)
 	}
+}
+
+func (s *server) writeMessage(e codec.Encoder, msg *internal.Message) {
+	err := e.Encode(msg)
+	if err != nil {
+		s.logger.Errorf("Failed to write response: %s:\n", err)
+		return
+	}
+}
+
+func (s *server) addClientConn(c wrappedConn) (string, error) {
+	if !s.isRunning() {
+		return "", errors.New("server is shutting down")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := strconv.Itoa(rand.Int())
+	s.clients[key] = c
+	return key, nil
+}
+
+func (s *server) removeClientConn(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.clients, key)
+}
+
+func (s *server) isRunning() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.running
+}
+
+// Shutdown change flag which is checked to verify if server is running
+func (s *server) Shutdown() {
+
+	s.logger.Debug("Shutdown started")
+
+	s.mu.Lock()
+	if s.running == false {
+		s.logger.Debug("Already stopped")
+		s.mu.Unlock()
+		return
+	}
+
+	s.running = false
+	s.mu.Unlock()
+
+	if len(s.clients) > 0 {
+		s.mu.Lock()
+		toClose := make([]wrappedConn, 0)
+		for _, c := range s.clients {
+			toClose = append(toClose, c)
+
+		}
+
+		i := len(toClose) - 1
+		for len(toClose) > 0 {
+			c := toClose[i]
+			toClose = append(toClose[:i], toClose[i+1:]...)
+			if c.isActive() {
+				c.pendingClosure = true
+				continue
+			}
+
+			c.Close()
+			i--
+		}
+
+		s.mu.Unlock()
+		s.logger.Debug("All connections closed")
+	}
+
+	err := s.connListener.Close()
+	if err != nil {
+		s.logger.Error(err)
+	}
+
+	s.logger.Debug("Shutdown ended")
 }
 
 func (s *server) applyDeadline(c net.Conn, enc codec.Encoder) bool {
