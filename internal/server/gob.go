@@ -102,7 +102,7 @@ func ConnectTimeout(d int) Option {
 type handler func(enc codec.Encoder, m *internal.Message)
 
 type server struct {
-	storage      storage.SBucketStorage
+	handler      *actionsHandler
 	logger       SBucketLogger
 	connListener net.Listener
 
@@ -128,7 +128,7 @@ type server struct {
 
 // New creates new storage
 func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
-	s := server{storage: storage, clients: map[string]wrappedConn{}}
+	s := server{clients: map[string]wrappedConn{}}
 
 	for _, o := range options {
 		o(&s)
@@ -150,12 +150,14 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 		s.codecType = codec.Gob
 	}
 
+	s.handler = &actionsHandler{storage: storage, logger: s.logger}
+
 	s.handlers = map[string]handler{
-		internal.CreateBucketCommand: s.handleCreateBucket,
-		internal.DeleteBucketCommand: s.handleDeleteBucket,
-		internal.AddCommand:          s.handleAdd,
-		internal.GetCommand:          s.handleGet,
-		internal.PingCommand:         s.handlePing,
+		internal.CreateBucketCommand: s.handler.handleCreateBucket,
+		internal.DeleteBucketCommand: s.handler.handleDeleteBucket,
+		internal.AddCommand:          s.handler.handleAdd,
+		internal.GetCommand:          s.handler.handleGet,
+		internal.PingCommand:         s.handler.handlePing,
 	}
 
 	return &s
@@ -290,21 +292,13 @@ func (s *server) handleConn(conn wrappedConn) {
 
 		h, ok := s.handlers[message.Command]
 		if !ok {
-			s.writeMessage(connCodec, &internal.Message{Result: false, Data: "Unknown command"})
+			s.handler.writeMessage(connCodec, &internal.Message{Result: false, Data: "Unknown command"})
 			continue
 		}
 
 		h(connCodec, &message)
 
 		conn.setActive(false)
-	}
-}
-
-func (s *server) writeMessage(e codec.Encoder, msg *internal.Message) {
-	err := e.Encode(msg)
-	if err != nil {
-		s.logger.Errorf("Failed to write response: %s:\n", err)
-		return
 	}
 }
 
@@ -388,7 +382,7 @@ func (s *server) applyDeadline(c net.Conn, enc codec.Encoder) bool {
 
 	err := c.SetDeadline(time.Now().Add(time.Duration(s.connectionDeadline) * time.Second))
 	if err != nil {
-		s.writeMessage(enc, &internal.Message{Result: false, Data: "Internal error"})
+		s.handler.writeMessage(enc, &internal.Message{Result: false, Data: "Internal error"})
 		s.logger.Errorf("Failed to set connection deadline: %s:", err)
 		return false
 	}
@@ -405,50 +399,10 @@ func (s *server) acquireConnectionSlot(enc codec.Encoder) bool {
 	timeout := time.NewTimer(time.Duration(s.connectTimeout) * time.Second)
 	select {
 	case <-timeout.C:
-		s.writeMessage(enc, &internal.Message{Result: false, Data: "Connections limit reached"})
+		s.handler.writeMessage(enc, &internal.Message{Result: false, Data: "Connections limit reached"})
 		return false
 	case s.clientSem <- struct{}{}:
 	}
 
 	return true
-}
-
-func (s *server) handleCreateBucket(enc codec.Encoder, m *internal.Message) {
-	err := s.storage.NewBucket(m.Value)
-	if err != nil {
-		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
-		return
-	}
-	s.writeMessage(enc, &internal.Message{Result: true})
-}
-
-func (s *server) handleDeleteBucket(enc codec.Encoder, m *internal.Message) {
-	err := s.storage.DelBucket(m.Value)
-	if err != nil {
-		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
-		return
-	}
-	s.writeMessage(enc, &internal.Message{Result: true})
-}
-
-func (s *server) handleAdd(enc codec.Encoder, m *internal.Message) {
-	err := s.storage.Add(m.Bucket, m.Key, m.Value)
-	if err != nil {
-		go s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
-		return
-	}
-	go s.writeMessage(enc, &internal.Message{Result: true})
-}
-
-func (s *server) handleGet(enc codec.Encoder, m *internal.Message) {
-	v, err := s.storage.Get(m.Bucket, m.Key)
-	if err != nil {
-		s.writeMessage(enc, &internal.Message{Result: false, Data: err.Error()})
-		return
-	}
-	s.writeMessage(enc, &internal.Message{Value: v.Value(), Result: true})
-}
-
-func (s *server) handlePing(enc codec.Encoder, m *internal.Message) {
-	s.logger.Debug("Received Ping")
 }

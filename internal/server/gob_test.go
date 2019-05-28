@@ -338,12 +338,12 @@ func TestNew(t *testing.T) {
 		{
 			"should create new server",
 			args{storage: s, options: nil},
-			&server{storage: s},
+			&server{handler: &actionsHandler{storage: s}},
 		},
 		{
 			"should create new server with options",
 			args{storage: s, options: []Option{Deadline(1), ConnectTimeout(1), MaxConnNum(0)}},
-			&server{storage: s, connectionDeadline: 1, connectTimeout: 1, maxClientsNum: 1},
+			&server{handler: &actionsHandler{storage: s}, connectionDeadline: 1, connectTimeout: 1, maxClientsNum: 1},
 		},
 	}
 	for _, tt := range tests {
@@ -381,9 +381,10 @@ func Test_server_writeMessage(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &server{
-				logger: tt.fields.logger,
+				logger:  tt.fields.logger,
+				handler: &actionsHandler{},
 			}
-			s.writeMessage(tt.args.e, tt.args.msg)
+			s.handler.writeMessage(tt.args.e, tt.args.msg)
 		})
 	}
 }
@@ -408,8 +409,10 @@ func Test_server_Start(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &server{
+				handler: &actionsHandler{},
 				logger:  tt.fields.logger,
 				address: tt.fields.address,
+				clients: map[string]wrappedConn{},
 			}
 			wg := &sync.WaitGroup{}
 			wg.Add(1)
@@ -418,14 +421,17 @@ func Test_server_Start(t *testing.T) {
 				wg.Done()
 			}(wg)
 			time.Sleep(1 * time.Second)
-			s.Shutdown()
 
 			c, err := net.Dial("tcp", ":54444")
 			if err != nil {
 				t.Error(err)
 				return
 			}
+
+			s.clients["test"] = wrappedConn{Conn: c}
 			c.Close()
+
+			s.Shutdown()
 			wg.Wait()
 		})
 	}
@@ -620,7 +626,7 @@ func Test_server_handleConn(t *testing.T) {
 			buffer := &bytes.Buffer{}
 
 			s := &server{
-				storage:            tt.fields.storage,
+				handler:            &actionsHandler{storage: tt.fields.storage},
 				logger:             newDefaultLogger(ioutil.Discard, buffer),
 				address:            tt.fields.address,
 				codecType:          codec.Gob,
@@ -633,7 +639,8 @@ func Test_server_handleConn(t *testing.T) {
 				middleware:         tt.fields.middleware,
 			}
 
-			c, _ := net.Pipe()
+			p, _ := net.Pipe()
+			c := wrappedConn{Conn: p}
 			go tt.args.callback(c)
 			go s.handleConn(c)
 			time.Sleep(500 * time.Millisecond)
@@ -681,6 +688,7 @@ func Test_server_applyDeadline(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &server{
+				handler:            &actionsHandler{logger: newDefaultLogger(ioutil.Discard, ioutil.Discard)},
 				logger:             newDefaultLogger(ioutil.Discard, ioutil.Discard),
 				connectionDeadline: tt.fields.connectionDeadline,
 			}
@@ -730,6 +738,7 @@ func Test_server_acquireConnectionSlot(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &server{
+				handler:        &actionsHandler{logger: newDefaultLogger(ioutil.Discard, ioutil.Discard)},
 				logger:         newDefaultLogger(ioutil.Discard, ioutil.Discard),
 				connectTimeout: tt.fields.connectTimeout,
 				maxClientsNum:  tt.fields.maxConnNum,
@@ -775,12 +784,12 @@ func Test_server_handleCreateBucket(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &server{storage: tt.fields.storage}
+			s := &server{handler: &actionsHandler{storage: tt.fields.storage}}
 
 			c, r := net.Pipe()
 			cod, _ := codec.New(codec.Gob, c)
 			codr, _ := codec.New(codec.Gob, r)
-			go s.handleCreateBucket(cod, tt.args.m)
+			go s.handler.handleCreateBucket(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
 			got := &internal.Message{}
 			codr.Decode(got)
@@ -816,14 +825,12 @@ func Test_server_handleDeleteBucket(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &server{
-				storage: tt.fields.storage,
-			}
+			s := &server{handler: &actionsHandler{storage: tt.fields.storage}}
 
 			c, r := net.Pipe()
 			cod, _ := codec.New(codec.Gob, c)
 			codr, _ := codec.New(codec.Gob, r)
-			go s.handleDeleteBucket(cod, tt.args.m)
+			go s.handler.handleDeleteBucket(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
 			got := &internal.Message{}
 			codr.Decode(got)
@@ -866,12 +873,12 @@ func Test_server_handleAdd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &server{storage: tt.fields.storage}
+			s := &server{handler: &actionsHandler{storage: tt.fields.storage}}
 
 			c, r := net.Pipe()
 			cod, _ := codec.New(codec.Gob, c)
 			codr, _ := codec.New(codec.Gob, r)
-			go s.handleAdd(cod, tt.args.m)
+			go s.handler.handleAdd(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
 			got := &internal.Message{}
 			codr.Decode(got)
@@ -914,12 +921,12 @@ func Test_server_handleGet(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &server{storage: tt.fields.storage}
+			s := &server{handler: &actionsHandler{storage: tt.fields.storage}}
 
 			c, r := net.Pipe()
 			cod, _ := codec.New(codec.Gob, c)
 			codr, _ := codec.New(codec.Gob, r)
-			go s.handleGet(cod, tt.args.m)
+			go s.handler.handleGet(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
 			got := &internal.Message{}
 			codr.Decode(got)
@@ -975,8 +982,11 @@ func Test_server_Shutdown(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			l, _ := net.Listen("tcp", ":54444")
 			s := &server{
-				running: tt.fields.running,
+				running:      tt.fields.running,
+				logger:       newDefaultLogger(ioutil.Discard, ioutil.Discard),
+				connListener: l,
 			}
 			s.Shutdown()
 
