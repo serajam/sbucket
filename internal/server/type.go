@@ -10,7 +10,7 @@ type SBucketServer interface {
 	Shutdown()
 }
 
-// SBucketLogger interface an be used for supplying any logger for server
+// SBucketLogger interface can be used for supplying any logger for server
 type SBucketLogger interface {
 	Error(interface{})
 	Info(interface{})

@@ -170,6 +170,7 @@ func (c *gobClient) authenticate(login, pass string) error {
 	return nil
 }
 
+// CreateBucket creates new bucket
 func (d *db) CreateBucket(name string) error {
 	if len(name) == 0 {
 		return errors.New("invalid name")
@@ -194,6 +195,7 @@ func (d *db) CreateBucket(name string) error {
 	return nil
 }
 
+// DeleteBucket deletes bucket
 func (d *db) DeleteBucket(name string) error {
 	if len(name) == 0 {
 		return errors.New("invalid name")
@@ -218,6 +220,7 @@ func (d *db) DeleteBucket(name string) error {
 	return nil
 }
 
+// Add new values to bucket
 func (d *db) Add(bucket, key, val string) error {
 	if len(bucket) == 0 || len(key) == 0 || len(val) == 0 {
 		return errors.New("invalid params")
@@ -252,6 +255,8 @@ func (d *db) Add(bucket, key, val string) error {
 
 	return nil
 }
+
+// Get value from bucket
 func (d *db) Get(bucket, key string) (string, error) {
 	if len(bucket) == 0 || len(key) == 0 {
 		return "", errors.New("invalid params")
@@ -276,18 +281,22 @@ func (d *db) Get(bucket, key string) (string, error) {
 	return resp.Value, nil
 }
 
+// Update value in bucket by key
 func (d *db) Update(bucket, key, val string) error {
 	panic("implement me")
 }
 
+// Delete value in bucket by key
 func (d *db) Delete(bucket, key string) error {
 	panic("implement me")
 }
 
+// Ping server
 func (d *db) Ping() error {
 	panic("implement me")
 }
 
+// Wait for all conn to finish
 func (d *db) Wait() {
 
 	fmt.Printf("\n Await %d Active %d", d.awaitingConn, d.active)
@@ -298,6 +307,7 @@ func (d *db) Wait() {
 	}
 }
 
+// Close all conn
 func (d *db) Close() error {
 	for d.awaitingConn > 0 {
 	}
