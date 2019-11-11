@@ -3,7 +3,6 @@ package server
 import (
 	"errors"
 	"fmt"
-	"github.com/serajam/sbucket/internal"
 	"github.com/serajam/sbucket/internal/codec"
 )
 
@@ -24,7 +23,7 @@ func (r AuthMiddleware) authenticate(login, pass string) error {
 	return nil
 }
 
-func (r AuthMiddleware) write(c codec.Encoder, msg *internal.Message) error {
+func (r AuthMiddleware) write(c codec.Encoder, msg *codec.Message) error {
 	err := c.Encode(msg)
 	if err != nil {
 		return fmt.Errorf("message %v encode failed: %s", *msg, err)
@@ -34,17 +33,17 @@ func (r AuthMiddleware) write(c codec.Encoder, msg *internal.Message) error {
 
 // Run execute middleware
 func (r AuthMiddleware) Run(c codec.Codec) error {
-	authMsg := internal.AuthMessage{}
+	authMsg := codec.AuthMessage{}
 	err := c.Decode(&authMsg)
 	if err != nil {
 		errMsg := errors.New("auth failed: unable to decode message")
-		return r.write(c, &internal.Message{Result: false, Data: errMsg.Error()})
+		return r.write(c, &codec.Message{Result: false, Data: errMsg.Error()})
 	}
 
 	err = r.authenticate(authMsg.Login, authMsg.Password)
 	if err != nil {
-		return r.write(c, &internal.Message{Result: false, Data: err.Error()})
+		return r.write(c, &codec.Message{Result: false, Data: err.Error()})
 	}
 
-	return r.write(c, &internal.Message{Result: true})
+	return r.write(c, &codec.Message{Result: true})
 }

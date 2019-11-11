@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -67,9 +66,9 @@ func Logger(loggerType, info, error string) Option {
 	}
 }
 
-// Deadline option defines connection activity deadline
+// ConnDeadline option defines connection activity deadline
 // 0 - disables deadline
-func Deadline(d int) Option {
+func ConnDeadline(d int) Option {
 	return func(s *server) {
 		s.connectionDeadline = d
 	}
@@ -99,7 +98,7 @@ func ConnectTimeout(d int) Option {
 }
 
 // message handler
-type handler func(enc codec.Encoder, m *internal.Message)
+type handler func(enc codec.Encoder, m *codec.Message)
 
 type server struct {
 	handler      *actionsHandler
@@ -123,12 +122,12 @@ type server struct {
 	mu sync.RWMutex
 	// contains server state
 	running bool
-	clients map[string]wrappedConn
+	clients map[string]*wrappedConn
 }
 
 // New creates new storage
 func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
-	s := server{clients: map[string]wrappedConn{}}
+	s := server{clients: map[string]*wrappedConn{}}
 
 	for _, o := range options {
 		o(&s)
@@ -147,7 +146,7 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 	}
 
 	if s.codecType == 0 {
-		s.codecType = codec.Gob
+		s.codecType = 2
 	}
 
 	s.handler = &actionsHandler{storage: storage, logger: s.logger}
@@ -165,8 +164,6 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 
 // Start starts storage server
 func (s *server) Start() {
-	s.running = true
-
 	// TODO add http server for exposing stats
 	var (
 		err error
@@ -179,12 +176,8 @@ func (s *server) Start() {
 		os.Exit(1)
 	}
 
-	defer func() {
-		s.Shutdown()
-	}()
-
 	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, os.Kill, syscall.SIGTERM)
+	signal.Notify(sigs)
 	go func() {
 		defer signal.Stop(sigs)
 		si := <-sigs
@@ -192,6 +185,7 @@ func (s *server) Start() {
 		s.Shutdown()
 	}()
 
+	s.running = true
 	s.logger.Infof("Server listening on %s", s.address)
 
 	for s.isRunning() {
@@ -206,21 +200,28 @@ func (s *server) Start() {
 			continue
 		}
 
-		conn := wrappedConn{Conn: c, active: false}
+		conn := &wrappedConn{Conn: c, active: false}
 		s.logger.Debugf("Accepted new connection: %s", conn.LocalAddr())
 		go s.handleConn(conn)
 	}
 }
 
-func (s *server) handleConn(conn wrappedConn) {
+func (s *server) handleConn(conn *wrappedConn) {
 	key, err := s.addClientConn(conn)
 	if err != nil {
 		s.logger.Info(err)
 		return
 	}
 
-	defer func(key string, conn net.Conn) {
-		conn.Close()
+	defer func(key string, conn *wrappedConn) {
+		if conn.isPendingClosure() {
+			return
+		}
+		s.logger.Debug("Conn close: " + conn.RemoteAddr().String())
+		err = conn.Close()
+		if err != nil {
+			s.logger.Debug(err)
+		}
 		s.removeClientConn(key)
 	}(key, conn)
 
@@ -246,8 +247,12 @@ func (s *server) handleConn(conn wrappedConn) {
 		}
 	}
 
-	message := internal.Message{}
+	message := codec.Message{}
 	failures := s.maxFailures
+
+	conn.setActive(true)
+	defer conn.setActive(false)
+
 	for s.isRunning() && !conn.isPendingClosure() {
 		if s.maxFailures > 0 && failures == 0 {
 			return
@@ -284,25 +289,21 @@ func (s *server) handleConn(conn wrappedConn) {
 			continue
 		}
 
-		conn.setActive(true)
-
 		if message.Command == internal.CloseCommand {
 			return
 		}
 
 		h, ok := s.handlers[message.Command]
 		if !ok {
-			s.handler.writeMessage(connCodec, &internal.Message{Result: false, Data: "Unknown command"})
+			s.handler.writeMessage(connCodec, &codec.Message{Result: false, Data: "Unknown command"})
 			continue
 		}
 
 		h(connCodec, &message)
-
-		conn.setActive(false)
 	}
 }
 
-func (s *server) addClientConn(c wrappedConn) (string, error) {
+func (s *server) addClientConn(c *wrappedConn) (string, error) {
 	if !s.isRunning() {
 		return "", errors.New("server is shutting down")
 	}
@@ -328,50 +329,62 @@ func (s *server) isRunning() bool {
 
 // Shutdown change flag which is checked to verify if server is running
 func (s *server) Shutdown() {
-
 	s.logger.Debug("Shutdown started")
-
-	s.mu.Lock()
 	if s.running == false {
 		s.logger.Debug("Already stopped")
-		s.mu.Unlock()
 		return
 	}
-
 	s.running = false
-	s.mu.Unlock()
-
-	if len(s.clients) > 0 {
-		s.mu.Lock()
-		toClose := make([]wrappedConn, 0)
-		for _, c := range s.clients {
-			toClose = append(toClose, c)
-
-		}
-
-		i := len(toClose) - 1
-		for len(toClose) > 0 {
-			c := toClose[i]
-			toClose = append(toClose[:i], toClose[i+1:]...)
-			if c.isActive() {
-				c.pendingClosure = true
-				continue
-			}
-
-			c.Close()
-			i--
-		}
-
-		s.mu.Unlock()
-		s.logger.Debug("All connections closed")
-	}
 
 	err := s.connListener.Close()
 	if err != nil {
 		s.logger.Error(err)
 	}
 
+	if len(s.clients) > 0 {
+		s.logger.Debug("All connections closed")
+		return
+	}
+
+	s.mu.Lock()
+	toClose := make([]*wrappedConn, 0)
+	for _, c := range s.clients {
+		c.pendingClosure = true
+		connCodec, _ := codec.New(s.codecType, c)
+		s.handler.writeMessage(connCodec, &codec.Message{Command: internal.CloseCommand})
+		toClose = append(toClose, c)
+	}
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	timeout := time.NewTimer(10 * time.Second)
+
+	select {
+	case <-ticker.C:
+		if len(toClose) == 0 {
+			break
+		}
+		i := len(toClose) - 1
+		for i > 0 {
+			c := toClose[i]
+			toClose = append(toClose[:i], toClose[i+1:]...)
+			if c.isActive() {
+				i--
+				continue
+			}
+
+			c.Close()
+			i--
+		}
+	case <-timeout.C:
+		s.logger.Error("Connections close timeout. Forcing closure")
+		for _, c := range toClose {
+			c.Close()
+		}
+	}
+
+	s.mu.Unlock()
 	s.logger.Debug("Shutdown ended")
+	s.logger.Debug("Stats: " + s.handler.storage.Stats())
 }
 
 func (s *server) applyDeadline(c net.Conn, enc codec.Encoder) bool {
@@ -382,7 +395,7 @@ func (s *server) applyDeadline(c net.Conn, enc codec.Encoder) bool {
 
 	err := c.SetDeadline(time.Now().Add(time.Duration(s.connectionDeadline) * time.Second))
 	if err != nil {
-		s.handler.writeMessage(enc, &internal.Message{Result: false, Data: "Internal error"})
+		s.handler.writeMessage(enc, &codec.Message{Result: false, Data: "Internal error"})
 		s.logger.Errorf("Failed to set connection deadline: %s:", err)
 		return false
 	}
@@ -399,7 +412,7 @@ func (s *server) acquireConnectionSlot(enc codec.Encoder) bool {
 	timeout := time.NewTimer(time.Duration(s.connectTimeout) * time.Second)
 	select {
 	case <-timeout.C:
-		s.handler.writeMessage(enc, &internal.Message{Result: false, Data: "Connections limit reached"})
+		s.handler.writeMessage(enc, &codec.Message{Result: false, Data: "Connections limit reached"})
 		return false
 	case s.clientSem <- struct{}{}:
 	}

@@ -1,4 +1,4 @@
-package internal
+package codec
 
 // Message used for processing all messages
 type Message struct {

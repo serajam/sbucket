@@ -26,8 +26,8 @@ type defaultLogger struct {
 
 func newDefaultLogger(infoWriter, errWriter io.Writer) SBucketLogger {
 	return &defaultLogger{
-		infoLogger: log.New(infoWriter, "", log.Ldate|log.Ltime),
-		errLogger:  log.New(errWriter, "", log.Ldate|log.Ltime),
+		infoLogger: log.New(infoWriter, "Server: ", log.Ldate|log.Ltime),
+		errLogger:  log.New(errWriter, "Server: ", log.Ldate|log.Ltime),
 	}
 }
 

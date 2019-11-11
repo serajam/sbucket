@@ -30,7 +30,7 @@ func main() {
 
 	flag.Parse()
 
-	strg, err := storage.New(*storageType)
+	db, err := storage.New(*storageType)
 	if err != nil {
 		log.Println(err)
 		os.Exit(1)
@@ -42,14 +42,14 @@ func main() {
 		middleware = append(middleware, server.AuthMiddleware{Login: *login, Pass: *password})
 	}
 
-	s := server.New(strg,
+	s := server.New(db,
 		server.Address(*address),
 		server.Logger(*loggerType, *infoLog, *errorLog),
 		server.WithMiddleware(middleware...),
 		server.MaxConnNum(*maxConnNum),
 		server.ConnectTimeout(*connTimeout),
 		server.MaxFailures(*maxConnFailures),
-		server.Deadline(1),
+		server.ConnDeadline(1),
 	)
 	s.Start()
 }

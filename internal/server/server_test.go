@@ -222,16 +222,16 @@ func TestDeadline(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Deadline(tt.args.d)
+			got := ConnDeadline(tt.args.d)
 			if reflect.TypeOf(got) != reflect.TypeOf(tt.want) {
-				t.Errorf("Deadline() = %v, want %v", got, tt.want)
+				t.Errorf("ConnDeadline() = %v, want %v", got, tt.want)
 			}
 
 			s := &server{}
 			got(s)
 
 			if s.connectionDeadline != tt.args.d {
-				t.Errorf("Deadline() = %v, want %v", s.connectionDeadline, tt.args.d)
+				t.Errorf("ConnDeadline() = %v, want %v", s.connectionDeadline, tt.args.d)
 			}
 		})
 	}
@@ -251,7 +251,7 @@ func TestMaxConnNum(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Deadline(tt.args.d)
+			got := ConnDeadline(tt.args.d)
 			if reflect.TypeOf(got) != reflect.TypeOf(tt.want) {
 				t.Errorf("MaxConnNum() = %v, want %v", got, tt.want)
 			}
@@ -309,7 +309,7 @@ func TestConnectTimeout(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Deadline(tt.args.d)
+			got := ConnDeadline(tt.args.d)
 			if reflect.TypeOf(got) != reflect.TypeOf(tt.want) {
 				t.Errorf("ConnectTimeout() = %v, want %v", got, tt.want)
 			}
@@ -342,7 +342,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			"should create new server with options",
-			args{storage: s, options: []Option{Deadline(1), ConnectTimeout(1), MaxConnNum(0)}},
+			args{storage: s, options: []Option{ConnDeadline(1), ConnectTimeout(1), MaxConnNum(0)}},
 			&server{handler: &actionsHandler{storage: s}, connectionDeadline: 1, connectTimeout: 1, maxClientsNum: 1},
 		},
 	}
@@ -363,7 +363,7 @@ func Test_server_writeMessage(t *testing.T) {
 	}
 	type args struct {
 		e   *gob.Encoder
-		msg *internal.Message
+		msg *codec.Message
 	}
 	tests := []struct {
 		name   string
@@ -375,7 +375,7 @@ func Test_server_writeMessage(t *testing.T) {
 			fields{
 				nil,
 			},
-			args{e: gob.NewEncoder(ioutil.Discard), msg: &internal.Message{}},
+			args{e: gob.NewEncoder(ioutil.Discard), msg: &codec.Message{}},
 		},
 	}
 	for _, tt := range tests {
@@ -410,9 +410,9 @@ func Test_server_Start(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &server{
 				handler: &actionsHandler{},
-				logger:  tt.fields.logger,
+				logger:  newDefaultLogger(os.Stdout, os.Stderr),
 				address: tt.fields.address,
-				clients: map[string]wrappedConn{},
+				clients: map[string]*wrappedConn{},
 			}
 			wg := &sync.WaitGroup{}
 			wg.Add(1)
@@ -428,7 +428,7 @@ func Test_server_Start(t *testing.T) {
 				return
 			}
 
-			s.clients["test"] = wrappedConn{Conn: c}
+			s.clients["test"] = &wrappedConn{Conn: c}
 			c.Close()
 
 			s.Shutdown()
@@ -557,7 +557,7 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(100 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&internal.Message{Command: "INVALID"})
+				err := enc.Encode(&codec.Message{Command: "INVALID"})
 				if err != nil {
 					println(err)
 				}
@@ -576,7 +576,7 @@ func Test_server_handleConn(t *testing.T) {
 				1,
 				1,
 				1,
-				map[string]handler{"TEST": func(c codec.Encoder, m *internal.Message) {}},
+				map[string]handler{"TEST": func(c codec.Encoder, m *codec.Message) {}},
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{},
@@ -584,7 +584,7 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(500 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&internal.Message{Command: "TEST"})
+				err := enc.Encode(&codec.Message{Command: "TEST"})
 				if err != nil {
 					println(err)
 				}
@@ -611,7 +611,7 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(500 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&internal.Message{Command: internal.CloseCommand})
+				err := enc.Encode(&codec.Message{Command: internal.CloseCommand})
 				if err != nil {
 					println(err)
 				}
@@ -640,7 +640,7 @@ func Test_server_handleConn(t *testing.T) {
 			}
 
 			p, _ := net.Pipe()
-			c := wrappedConn{Conn: p}
+			c := &wrappedConn{Conn: p}
 			go tt.args.callback(c)
 			go s.handleConn(c)
 			time.Sleep(500 * time.Millisecond)
@@ -760,7 +760,7 @@ func Test_server_handleCreateBucket(t *testing.T) {
 		storage storage.SBucketStorage
 	}
 	type args struct {
-		m *internal.Message
+		m *codec.Message
 	}
 	tests := []struct {
 		name   string
@@ -771,14 +771,14 @@ func Test_server_handleCreateBucket(t *testing.T) {
 		{
 			"should create new bucket",
 			fields{&storageMockOk{}},
-			args{m: &internal.Message{Command: internal.CreateBucketCommand, Value: "NEW"}},
+			args{m: &codec.Message{Command: internal.CreateBucketCommand, Value: "NEW"}},
 			true,
 		},
 
 		{
 			"should not create new bucket",
 			fields{&storageMockError{}},
-			args{m: &internal.Message{Command: internal.CreateBucketCommand, Value: ""}},
+			args{m: &codec.Message{Command: internal.CreateBucketCommand, Value: ""}},
 			false,
 		},
 	}
@@ -791,7 +791,7 @@ func Test_server_handleCreateBucket(t *testing.T) {
 			codr, _ := codec.New(codec.Gob, r)
 			go s.handler.handleCreateBucket(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
-			got := &internal.Message{}
+			got := &codec.Message{}
 			codr.Decode(got)
 			c.Close()
 			r.Close()
@@ -808,7 +808,7 @@ func Test_server_handleDeleteBucket(t *testing.T) {
 		storage storage.SBucketStorage
 	}
 	type args struct {
-		m *internal.Message
+		m *codec.Message
 	}
 	tests := []struct {
 		name   string
@@ -819,7 +819,7 @@ func Test_server_handleDeleteBucket(t *testing.T) {
 		{
 			"should delete bucket",
 			fields{&storageMockOk{}},
-			args{m: &internal.Message{Command: internal.DeleteBucketCommand, Value: "NEW"}},
+			args{m: &codec.Message{Command: internal.DeleteBucketCommand, Value: "NEW"}},
 			true,
 		},
 	}
@@ -832,7 +832,7 @@ func Test_server_handleDeleteBucket(t *testing.T) {
 			codr, _ := codec.New(codec.Gob, r)
 			go s.handler.handleDeleteBucket(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
-			got := &internal.Message{}
+			got := &codec.Message{}
 			codr.Decode(got)
 			c.Close()
 			r.Close()
@@ -849,7 +849,7 @@ func Test_server_handleAdd(t *testing.T) {
 		storage storage.SBucketStorage
 	}
 	type args struct {
-		m *internal.Message
+		m *codec.Message
 	}
 	tests := []struct {
 		name   string
@@ -860,14 +860,14 @@ func Test_server_handleAdd(t *testing.T) {
 		{
 			"should create key",
 			fields{&storageMockOk{}},
-			args{m: &internal.Message{Command: internal.AddCommand, Key: "TEST", Value: "NEW"}},
+			args{m: &codec.Message{Command: internal.AddCommand, Key: "TEST", Value: "NEW"}},
 			true,
 		},
 
 		{
 			"should not create new key",
 			fields{&storageMockError{}},
-			args{m: &internal.Message{Command: internal.AddCommand, Key: "TEST", Value: ""}},
+			args{m: &codec.Message{Command: internal.AddCommand, Key: "TEST", Value: ""}},
 			false,
 		},
 	}
@@ -880,7 +880,7 @@ func Test_server_handleAdd(t *testing.T) {
 			codr, _ := codec.New(codec.Gob, r)
 			go s.handler.handleAdd(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
-			got := &internal.Message{}
+			got := &codec.Message{}
 			codr.Decode(got)
 			c.Close()
 			r.Close()
@@ -897,7 +897,7 @@ func Test_server_handleGet(t *testing.T) {
 		storage storage.SBucketStorage
 	}
 	type args struct {
-		m *internal.Message
+		m *codec.Message
 	}
 	tests := []struct {
 		name   string
@@ -908,14 +908,14 @@ func Test_server_handleGet(t *testing.T) {
 		{
 			"should get key",
 			fields{&storageMockOk{}},
-			args{m: &internal.Message{Command: internal.GetCommand, Key: "TEST"}},
+			args{m: &codec.Message{Command: internal.GetCommand, Key: "TEST"}},
 			true,
 		},
 
 		{
 			"should not get key",
 			fields{&storageMockError{}},
-			args{m: &internal.Message{Command: internal.GetCommand, Key: ""}},
+			args{m: &codec.Message{Command: internal.GetCommand, Key: ""}},
 			false,
 		},
 	}
@@ -928,7 +928,7 @@ func Test_server_handleGet(t *testing.T) {
 			codr, _ := codec.New(codec.Gob, r)
 			go s.handler.handleGet(cod, tt.args.m)
 			time.Sleep(200 * time.Millisecond)
-			got := &internal.Message{}
+			got := &codec.Message{}
 			codr.Decode(got)
 			c.Close()
 			r.Close()
@@ -983,11 +983,16 @@ func Test_server_Shutdown(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			l, _ := net.Listen("tcp", ":54444")
+			sto, _ := storage.New(storage.MapType)
 			s := &server{
 				running:      tt.fields.running,
 				logger:       newDefaultLogger(ioutil.Discard, ioutil.Discard),
 				connListener: l,
+				handler:      &actionsHandler{storage: sto, logger: newDefaultLogger(ioutil.Discard, ioutil.Discard)},
 			}
+			go func() {
+
+			}()
 			s.Shutdown()
 
 			if s.running != false {

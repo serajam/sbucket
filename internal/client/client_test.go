@@ -1,15 +1,15 @@
 package client
 
 import (
+	"github.com/serajam/sbucket/internal/codec"
 	"testing"
 	"time"
 )
 
-
 func TestClient_CreateBucket(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
-	client, err := NewGobClient(":3456", 4, 1, "", "")
+	client, err := NewClient(":3456", 4, 1, "", "", codec.MsgPack)
 	if err != nil {
 		t.Error(err)
 		return

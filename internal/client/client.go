@@ -2,22 +2,22 @@ package client
 
 import (
 	"context"
-	"encoding/gob"
 	"errors"
 	"fmt"
 	"github.com/serajam/sbucket/internal"
+	"github.com/serajam/sbucket/internal/codec"
 	"net"
 	"strings"
 	"sync"
 	"time"
 )
 
-type gobClient struct {
+type client struct {
 	conn  net.Conn
 	inUse bool
 
-	enc *gob.Encoder
-	dec *gob.Decoder
+	enc codec.Encoder
+	dec codec.Decoder
 }
 
 type db struct {
@@ -26,23 +26,25 @@ type db struct {
 	address     string
 	dialTimeout time.Duration
 
-	conn   []*gobClient
+	conn   []*client
 	active int
 
 	awaitingConn int
-	requiredConn chan *gobClient
+	requiredConn chan *client
 
 	pingInterval int
+	codecType    int
 }
 
-// NewGobClient creates 	a pool of connections
-func NewGobClient(address string, connNum int, dialTimeout time.Duration, login, pass string) (Client, error) {
+// NewClient creates 	a pool of connections
+func NewClient(address string, connNum int, dialTimeout time.Duration, login, pass string, codecType int) (Client, error) {
 	dbConn := &db{
-		conn:         make([]*gobClient, 0),
-		requiredConn: make(chan *gobClient, connNum),
+		conn:         make([]*client, 0),
+		requiredConn: make(chan *client, connNum),
 		address:      address,
 		dialTimeout:  dialTimeout,
 		pingInterval: 0,
+		codecType:    codecType,
 	}
 
 	for i := connNum; i > 0; i-- {
@@ -61,18 +63,20 @@ func NewGobClient(address string, connNum int, dialTimeout time.Duration, login,
 		dbConn.conn = append(dbConn.conn, c)
 	}
 
-	go dbConn.ping()
+	//go dbConn.ping()
 
 	return dbConn, nil
 }
 
-func (d db) newConn() (*gobClient, error) {
+func (d db) newConn() (*client, error) {
 	c, err := net.DialTimeout("tcp", d.address, d.dialTimeout*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open storage connection: %s", err)
 	}
 
-	return &gobClient{conn: c, enc: gob.NewEncoder(c), dec: gob.NewDecoder(c)}, nil
+	encdec, _ := codec.New(d.codecType, c)
+
+	return &client{conn: c, enc: encdec, dec: encdec}, nil
 }
 
 func (d *db) ping() {
@@ -90,7 +94,7 @@ func (d *db) ping() {
 			}
 
 			for i, conn := range d.conn {
-				err := conn.enc.Encode(&internal.Message{Command: internal.PingCommand})
+				err := conn.enc.Encode(&codec.Message{Command: internal.PingCommand})
 				if err != nil {
 					fmt.Println("ERR", err)
 					conn.conn.Close()
@@ -107,7 +111,7 @@ func (d *db) ping() {
 	}
 }
 
-func (d *db) acquireConn(ctx context.Context) *gobClient {
+func (d *db) acquireConn(ctx context.Context) *client {
 	d.mu.Lock()
 
 	free := len(d.conn)
@@ -134,7 +138,7 @@ func (d *db) acquireConn(ctx context.Context) *gobClient {
 	return conn
 }
 
-func (d *db) releaseConn(conn *gobClient) {
+func (d *db) releaseConn(conn *client) {
 	d.mu.Lock()
 
 	if d.awaitingConn > 0 {
@@ -151,13 +155,13 @@ func (d *db) releaseConn(conn *gobClient) {
 }
 
 // Authenticate authenticates for using storage
-func (c *gobClient) authenticate(login, pass string) error {
-	err := c.enc.Encode(&internal.AuthMessage{Login: login, Password: pass})
+func (c *client) authenticate(login, pass string) error {
+	err := c.enc.Encode(&codec.AuthMessage{Login: login, Password: pass})
 	if err != nil {
 		return fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := internal.Message{}
+	resp := codec.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("error while reading response: %s", err)
@@ -179,14 +183,14 @@ func (d *db) CreateBucket(name string) error {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := internal.Message{Command: internal.CreateBucketCommand, Value: name}
+	request := codec.Message{Command: internal.CreateBucketCommand, Value: name}
 
 	err := c.enc.Encode(request)
 	if err != nil {
 		return fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := internal.Message{}
+	resp := codec.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("error while reading response: %s", err)
@@ -204,14 +208,14 @@ func (d *db) DeleteBucket(name string) error {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := internal.Message{Command: internal.DeleteBucketCommand, Value: name}
+	request := codec.Message{Command: internal.DeleteBucketCommand, Value: name}
 
 	err := c.enc.Encode(request)
 	if err != nil {
 		return fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := internal.Message{}
+	resp := codec.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return fmt.Errorf("error while reading response: %s", err)
@@ -222,8 +226,12 @@ func (d *db) DeleteBucket(name string) error {
 
 // Add new values to bucket
 func (d *db) Add(bucket, key, val string) error {
-	if len(bucket) == 0 || len(key) == 0 || len(val) == 0 {
-		return errors.New("invalid params")
+	if len(bucket) == 0 {
+		return errors.New("bucket name required")
+	}
+
+	if len(key) == 0 {
+		return errors.New("key name required")
 	}
 
 	c := d.acquireConn(context.Background())
@@ -232,7 +240,7 @@ func (d *db) Add(bucket, key, val string) error {
 	}
 	defer d.releaseConn(c)
 
-	msg := internal.Message{Command: internal.AddCommand, Bucket: bucket, Key: key, Value: val}
+	msg := codec.Message{Command: internal.AddCommand, Bucket: bucket, Key: key, Value: val}
 
 	err := c.enc.Encode(msg)
 	if err != nil {
@@ -240,10 +248,6 @@ func (d *db) Add(bucket, key, val string) error {
 	}
 
 	err = c.dec.Decode(&msg)
-
-	if d.isConnectionBroken(err) {
-		c.conn.Close()
-	}
 
 	if err != nil {
 		return fmt.Errorf("error while reading response: %s", err)
@@ -265,14 +269,14 @@ func (d *db) Get(bucket, key string) (string, error) {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := internal.Message{Command: internal.GetCommand, Bucket: bucket, Key: key}
+	request := codec.Message{Command: internal.GetCommand, Bucket: bucket, Key: key}
 
 	err := c.enc.Encode(request)
 	if err != nil {
 		return "", fmt.Errorf("error while writing command: %s", err)
 	}
 
-	resp := internal.Message{}
+	resp := codec.Message{}
 	err = c.dec.Decode(&resp)
 	if err != nil {
 		return "", fmt.Errorf("error while reading response: %s", err)
@@ -298,8 +302,7 @@ func (d *db) Ping() error {
 
 // Wait for all conn to finish
 func (d *db) Wait() {
-
-	fmt.Printf("\n Await %d Active %d", d.awaitingConn, d.active)
+	fmt.Printf("\n Await %d Active %d\n", d.awaitingConn, d.active)
 
 	for d.awaitingConn > 0 {
 	}
@@ -309,12 +312,7 @@ func (d *db) Wait() {
 
 // Close all conn
 func (d *db) Close() error {
-	for d.awaitingConn > 0 {
-	}
-	for d.active > 0 {
-	}
-
-	request := internal.Message{Command: internal.CloseCommand}
+	request := codec.Message{Command: internal.CloseCommand}
 
 	for _, c := range d.conn {
 		err := c.enc.Encode(request)
