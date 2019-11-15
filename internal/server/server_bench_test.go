@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/serajam/sbucket/internal"
 	"github.com/serajam/sbucket/internal/codec"
 	"github.com/serajam/sbucket/internal/storage"
 	"math/rand"
@@ -30,7 +31,7 @@ func BenchmarkServer(b *testing.B) {
 	go func() {
 		s.Start()
 	}()
-//	defer s.Shutdown()
+	//	defer s.Shutdown()
 	time.Sleep(500 * time.Millisecond)
 
 	conn, err := net.Dial("tcp", fmt.Sprintf(":%d", port))
@@ -40,7 +41,7 @@ func BenchmarkServer(b *testing.B) {
 	}
 
 	msg := codec.Message{
-		Command: "DEL",
+		Command: internal.DeleteCommand,
 		Bucket:  "test",
 		Key:     "test",
 		Value:   "test",

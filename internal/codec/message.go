@@ -2,7 +2,7 @@ package codec
 
 // Message used for processing all messages
 type Message struct {
-	Command string
+	Command byte
 	Bucket  string
 
 	Key   string
@@ -16,4 +16,3 @@ type Message struct {
 type AuthMessage struct {
 	Login, Password string
 }
-

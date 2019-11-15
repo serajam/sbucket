@@ -112,7 +112,7 @@ type server struct {
 	maxClientsNum      int // seconds
 	maxFailures        int
 
-	handlers map[string]handler
+	handlers map[int]handler
 
 	clientSem    chan struct{}
 	clientsCount int32
@@ -151,7 +151,7 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 
 	s.handler = &actionsHandler{storage: storage, logger: s.logger}
 
-	s.handlers = map[string]handler{
+	s.handlers = map[int]handler{
 		internal.CreateBucketCommand: s.handler.handleCreateBucket,
 		internal.DeleteBucketCommand: s.handler.handleDeleteBucket,
 		internal.AddCommand:          s.handler.handleAdd,
@@ -293,7 +293,7 @@ func (s *server) handleConn(conn *wrappedConn) {
 			return
 		}
 
-		h, ok := s.handlers[message.Command]
+		h, ok := s.handlers[int(message.Command)]
 		if !ok {
 			s.handler.writeMessage(connCodec, &codec.Message{Result: false, Data: "Unknown command"})
 			continue

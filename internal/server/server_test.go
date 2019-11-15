@@ -445,7 +445,7 @@ func Test_server_handleConn(t *testing.T) {
 		connectTimeout     int
 		connectionDeadline int
 		maxConnNum         int
-		handlers           map[string]handler
+		handlers           map[int]handler
 		clientSem          chan struct{}
 		clientsCount       int32
 		middleware         []Middleware
@@ -468,7 +468,7 @@ func Test_server_handleConn(t *testing.T) {
 				10,
 				10,
 				1,
-				make(map[string]handler),
+				make(map[int]handler),
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{},
@@ -489,7 +489,7 @@ func Test_server_handleConn(t *testing.T) {
 				1,
 				1,
 				1,
-				make(map[string]handler),
+				make(map[int]handler),
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{},
@@ -509,7 +509,7 @@ func Test_server_handleConn(t *testing.T) {
 				1,
 				1,
 				1,
-				make(map[string]handler),
+				make(map[int]handler),
 				make(chan struct{}, 0),
 				0,
 				[]Middleware{},
@@ -528,7 +528,7 @@ func Test_server_handleConn(t *testing.T) {
 				1,
 				1,
 				1,
-				make(map[string]handler),
+				make(map[int]handler),
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{mockMiddleware{}},
@@ -549,7 +549,7 @@ func Test_server_handleConn(t *testing.T) {
 				1,
 				1,
 				1,
-				make(map[string]handler),
+				make(map[int]handler),
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{},
@@ -557,7 +557,7 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(100 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&codec.Message{Command: "INVALID"})
+				err := enc.Encode(&codec.Message{Command: 234})
 				if err != nil {
 					println(err)
 				}
@@ -576,7 +576,7 @@ func Test_server_handleConn(t *testing.T) {
 				1,
 				1,
 				1,
-				map[string]handler{"TEST": func(c codec.Encoder, m *codec.Message) {}},
+				map[int]handler{231: func(c codec.Encoder, m *codec.Message) {}},
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{},
@@ -584,7 +584,7 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(500 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&codec.Message{Command: "TEST"})
+				err := enc.Encode(&codec.Message{Command: internal.DeleteCommand})
 				if err != nil {
 					println(err)
 				}
@@ -603,7 +603,7 @@ func Test_server_handleConn(t *testing.T) {
 				1,
 				1,
 				1,
-				map[string]handler{},
+				map[int]handler{},
 				make(chan struct{}, 1),
 				0,
 				[]Middleware{},

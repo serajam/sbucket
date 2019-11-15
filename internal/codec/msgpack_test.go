@@ -1,6 +1,7 @@
 package codec
 
 import (
+	"github.com/serajam/sbucket/internal"
 	ms "github.com/vmihailenco/msgpack"
 	"net"
 	"reflect"
@@ -20,7 +21,7 @@ func Test_msgpack_Decode(t *testing.T) {
 		{
 			"Test decoding",
 			args{&Message{
-				Command: "DEL",
+				Command: internal.DeleteCommand,
 				Bucket:  "test1",
 				Key:     "key1",
 				Value:   "val1",
