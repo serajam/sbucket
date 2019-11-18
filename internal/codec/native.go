@@ -43,7 +43,7 @@ func (l native) Encode(m interface{}) error {
 	// put msg size
 	binary.BigEndian.PutUint32(data[0:4], uint32(totalMsgSize-4))
 
-	// put bucket and command bytes
+	// put command bytes and bucket name
 	data[4] = msg.Command
 	pointer := msgSizeLen + msgCmdLen + bucketSizeLen - 1
 	data[pointer] = byte(bucketLen)
