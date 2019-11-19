@@ -41,7 +41,7 @@ func BenchmarkServer(b *testing.B) {
 	}
 
 	msg := codec.Message{
-		Command: internal.DeleteCommand,
+		Command: internal.DelCmd,
 		Bucket:  "test",
 		Key:     "test",
 		Value:   "test",

@@ -21,7 +21,7 @@ func Test_msgpack_Decode(t *testing.T) {
 		{
 			"Test decoding",
 			args{&Message{
-				Command: internal.DeleteCommand,
+				Command: internal.DelCmd,
 				Bucket:  "test1",
 				Key:     "key1",
 				Value:   "val1",

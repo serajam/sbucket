@@ -152,11 +152,11 @@ func New(storage storage.SBucketStorage, options ...Option) SBucketServer {
 	s.handler = &actionsHandler{storage: storage, logger: s.logger}
 
 	s.handlers = map[int]handler{
-		internal.CreateBucketCommand: s.handler.handleCreateBucket,
-		internal.DeleteBucketCommand: s.handler.handleDeleteBucket,
-		internal.AddCommand:          s.handler.handleAdd,
-		internal.GetCommand:          s.handler.handleGet,
-		internal.PingCommand:         s.handler.handlePing,
+		internal.CreateBucketCmd: s.handler.handleCreateBucket,
+		internal.DelBucketCmd:    s.handler.handleDeleteBucket,
+		internal.AddCmd:          s.handler.handleAdd,
+		internal.GetCmd:          s.handler.handleGet,
+		internal.PingCmd:         s.handler.handlePing,
 	}
 
 	return &s
@@ -289,7 +289,7 @@ func (s *server) handleConn(conn *wrappedConn) {
 			continue
 		}
 
-		if message.Command == internal.CloseCommand {
+		if message.Command == internal.CloseCmd {
 			return
 		}
 
@@ -351,7 +351,7 @@ func (s *server) Shutdown() {
 	for _, c := range s.clients {
 		c.pendingClosure = true
 		connCodec, _ := codec.New(s.codecType, c)
-		s.handler.writeMessage(connCodec, &codec.Message{Command: internal.CloseCommand})
+		s.handler.writeMessage(connCodec, &codec.Message{Command: internal.CloseCmd})
 		toClose = append(toClose, c)
 	}
 

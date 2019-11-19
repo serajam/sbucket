@@ -584,7 +584,7 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(500 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&codec.Message{Command: internal.DeleteCommand})
+				err := enc.Encode(&codec.Message{Command: internal.DelCmd})
 				if err != nil {
 					println(err)
 				}
@@ -611,7 +611,7 @@ func Test_server_handleConn(t *testing.T) {
 			args{callback: func(c net.Conn) {
 				time.Sleep(500 * time.Millisecond)
 				enc := gob.NewEncoder(c)
-				err := enc.Encode(&codec.Message{Command: internal.CloseCommand})
+				err := enc.Encode(&codec.Message{Command: internal.CloseCmd})
 				if err != nil {
 					println(err)
 				}
@@ -771,14 +771,14 @@ func Test_server_handleCreateBucket(t *testing.T) {
 		{
 			"should create new bucket",
 			fields{&storageMockOk{}},
-			args{m: &codec.Message{Command: internal.CreateBucketCommand, Value: "NEW"}},
+			args{m: &codec.Message{Command: internal.CreateBucketCmd, Value: "NEW"}},
 			true,
 		},
 
 		{
 			"should not create new bucket",
 			fields{&storageMockError{}},
-			args{m: &codec.Message{Command: internal.CreateBucketCommand, Value: ""}},
+			args{m: &codec.Message{Command: internal.CreateBucketCmd, Value: ""}},
 			false,
 		},
 	}
@@ -819,7 +819,7 @@ func Test_server_handleDeleteBucket(t *testing.T) {
 		{
 			"should delete bucket",
 			fields{&storageMockOk{}},
-			args{m: &codec.Message{Command: internal.DeleteBucketCommand, Value: "NEW"}},
+			args{m: &codec.Message{Command: internal.DelBucketCmd, Value: "NEW"}},
 			true,
 		},
 	}
@@ -860,14 +860,14 @@ func Test_server_handleAdd(t *testing.T) {
 		{
 			"should create key",
 			fields{&storageMockOk{}},
-			args{m: &codec.Message{Command: internal.AddCommand, Key: "TEST", Value: "NEW"}},
+			args{m: &codec.Message{Command: internal.AddCmd, Key: "TEST", Value: "NEW"}},
 			true,
 		},
 
 		{
 			"should not create new key",
 			fields{&storageMockError{}},
-			args{m: &codec.Message{Command: internal.AddCommand, Key: "TEST", Value: ""}},
+			args{m: &codec.Message{Command: internal.AddCmd, Key: "TEST", Value: ""}},
 			false,
 		},
 	}
@@ -908,14 +908,14 @@ func Test_server_handleGet(t *testing.T) {
 		{
 			"should get key",
 			fields{&storageMockOk{}},
-			args{m: &codec.Message{Command: internal.GetCommand, Key: "TEST"}},
+			args{m: &codec.Message{Command: internal.GetCmd, Key: "TEST"}},
 			true,
 		},
 
 		{
 			"should not get key",
 			fields{&storageMockError{}},
-			args{m: &codec.Message{Command: internal.GetCommand, Key: ""}},
+			args{m: &codec.Message{Command: internal.GetCmd, Key: ""}},
 			false,
 		},
 	}

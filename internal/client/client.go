@@ -94,7 +94,7 @@ func (d *db) ping() {
 			}
 
 			for i, conn := range d.conn {
-				err := conn.enc.Encode(&codec.Message{Command: internal.PingCommand})
+				err := conn.enc.Encode(&codec.Message{Command: internal.PingCmd})
 				if err != nil {
 					fmt.Println("ERR", err)
 					conn.conn.Close()
@@ -183,7 +183,7 @@ func (d *db) CreateBucket(name string) error {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := codec.Message{Command: internal.CreateBucketCommand, Value: name}
+	request := codec.Message{Command: internal.CreateBucketCmd, Value: name}
 
 	err := c.enc.Encode(request)
 	if err != nil {
@@ -208,7 +208,7 @@ func (d *db) DeleteBucket(name string) error {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := codec.Message{Command: internal.DeleteBucketCommand, Value: name}
+	request := codec.Message{Command: internal.DelBucketCmd, Value: name}
 
 	err := c.enc.Encode(request)
 	if err != nil {
@@ -240,7 +240,7 @@ func (d *db) Add(bucket, key, val string) error {
 	}
 	defer d.releaseConn(c)
 
-	msg := codec.Message{Command: internal.AddCommand, Bucket: bucket, Key: key, Value: val}
+	msg := codec.Message{Command: internal.AddCmd, Bucket: bucket, Key: key, Value: val}
 
 	err := c.enc.Encode(msg)
 	if err != nil {
@@ -269,7 +269,7 @@ func (d *db) Get(bucket, key string) (string, error) {
 	c := d.acquireConn(context.Background())
 	defer d.releaseConn(c)
 
-	request := codec.Message{Command: internal.GetCommand, Bucket: bucket, Key: key}
+	request := codec.Message{Command: internal.GetCmd, Bucket: bucket, Key: key}
 
 	err := c.enc.Encode(request)
 	if err != nil {
@@ -312,7 +312,7 @@ func (d *db) Wait() {
 
 // Close all conn
 func (d *db) Close() error {
-	request := codec.Message{Command: internal.CloseCommand}
+	request := codec.Message{Command: internal.CloseCmd}
 
 	for _, c := range d.conn {
 		err := c.enc.Encode(request)

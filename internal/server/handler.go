@@ -20,7 +20,7 @@ func (s *actionsHandler) writeMessage(e codec.Encoder, msg *codec.Message) {
 }
 
 func (s *actionsHandler) handleCreateBucket(enc codec.Encoder, m *codec.Message) {
-	msg := &codec.Message{Command: internal.ResultCommand, Result: true}
+	msg := &codec.Message{Command: internal.ResultCmd, Result: true}
 
 	err := s.storage.NewBucket(m.Value)
 	if err != nil {
@@ -34,7 +34,7 @@ func (s *actionsHandler) handleCreateBucket(enc codec.Encoder, m *codec.Message)
 }
 
 func (s *actionsHandler) handleDeleteBucket(enc codec.Encoder, m *codec.Message) {
-	msg := &codec.Message{Command: internal.ResultCommand, Result: true}
+	msg := &codec.Message{Command: internal.ResultCmd, Result: true}
 
 	err := s.storage.DelBucket(m.Value)
 	if err != nil {
@@ -48,7 +48,7 @@ func (s *actionsHandler) handleDeleteBucket(enc codec.Encoder, m *codec.Message)
 }
 
 func (s *actionsHandler) handleAdd(enc codec.Encoder, m *codec.Message) {
-	msg := &codec.Message{Command: internal.ResultCommand, Result: true}
+	msg := &codec.Message{Command: internal.ResultCmd, Result: true}
 
 	err := s.storage.Add(m.Bucket, m.Key, m.Value)
 	if err != nil {
@@ -62,7 +62,7 @@ func (s *actionsHandler) handleAdd(enc codec.Encoder, m *codec.Message) {
 }
 
 func (s *actionsHandler) handleGet(enc codec.Encoder, m *codec.Message) {
-	msg := &codec.Message{Command: internal.ResultCommand, Result: true}
+	msg := &codec.Message{Command: internal.ResultCmd, Result: true}
 
 	v, err := s.storage.Get(m.Bucket, m.Key)
 	if err != nil {

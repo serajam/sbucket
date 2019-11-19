@@ -1,27 +1,28 @@
 package internal
 
 //const (
-//	AddCommand          = "ADD"
-//	DeleteCommand       = "DEL"
-//	UpdateCommand       = "UPD"
-//	GetCommand          = "GET"
-//	SearchCommand       = "SRC"
-//	CloseCommand        = "CLS"
-//	CreateBucketCommand = "BKC"
-//	DeleteBucketCommand = "BKD"
-//	PingCommand         = "PNG"
+//	AddCmd          = "ADD"
+//	DelCmd       = "DEL"
+//	UpdateCmd       = "UPD"
+//	GetCmd          = "GET"
+//	SearchCmd       = "SRC"
+//	CloseCmd        = "CLS"
+//	CreateBucketCmd = "BKC"
+//	DelBucketCmd = "BKD"
+//	PingCmd         = "PNG"
 //)
 
 // Available commands
 const (
-	AddCommand = iota
-	DeleteCommand
-	UpdateCommand
-	GetCommand
-	SearchCommand
-	CloseCommand
-	CreateBucketCommand
-	DeleteBucketCommand
-	PingCommand
-	ResultCommand
+	AddCmd = iota
+	DelCmd
+	UpdateCmd
+	GetCmd
+	SearchCmd
+	CloseCmd
+	CreateBucketCmd
+	DelBucketCmd
+	PingCmd
+	ResultCmd
+	ResultValueCmd
 )
